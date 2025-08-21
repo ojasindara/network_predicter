@@ -1,0 +1,16 @@
+{
+  "name": "network_predicter",
+  "version": "1.0.0",
+  "description": "A predictive algorithm for network availability to optimize internet use",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
