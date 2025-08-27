@@ -1,12 +1,37 @@
 import 'package:flutter/material.dart';
 import '../data/db.dart';
 import '../data/region_matcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 
+Future<void> requestPermissions() async {
+  List<Permission> permissions = [
+    Permission.location,
+    Permission.storage,
+    Permission.camera,
+  ];
+
+  for (Permission permission in permissions) {
+    PermissionStatus status = await permission.status;
+
+    if (status.isDenied) {
+      status = await permission.request();
+
+      if (status.isDenied) {
+        // User denied
+        print('${permission.toString()} denied. Please enable it in settings.');
+      } else if (status.isPermanentlyDenied) {
+        // User permanently denied
+        print('${permission.toString()} permanently denied. Opening settings...');
+        await openAppSettings();
+      }
+    }
+  }
+}
 // ------------------ Helper Function for Download Speed ------------------
 Future<double> getDownloadSpeedMbps() async {
   try {
@@ -48,7 +73,35 @@ class _LoggerState extends State<LoggerScreen> {
   String? _netType = "unknown"; // placeholder
 
   bool _isLoading = false;
+// ------------------ Request Permissions ------------------
+  @override
+  void initState() {
+    super.initState();
+    requestPermissions(); // ask for all needed permissions when screen opens
+  }
 
+  Future<void> requestPermissions() async {
+    List<Permission> permissions = [
+      Permission.location,
+      Permission.storage,
+      Permission.camera,
+    ];
+
+    for (Permission permission in permissions) {
+      PermissionStatus status = await permission.status;
+
+      if (status.isDenied) {
+        status = await permission.request();
+
+        if (status.isDenied) {
+          print('${permission.toString()} denied. Please enable it in settings.');
+        } else if (status.isPermanentlyDenied) {
+          print('${permission.toString()} permanently denied. Opening settings...');
+          await openAppSettings();
+        }
+      }
+    }
+  }
   // ------------------ Live readings ------------------
   Future<void> _grabLiveReadings() async {
     setState(() => _isLoading = true);
