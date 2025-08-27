@@ -19,7 +19,7 @@
 
     <!-- ✅ android:icon is correctly placed inside <application> -->
     <application
-        android:label="Network Tracker"
+        android:label="Network Predicter"
         android:icon="@mipmap/ic_launcher">
         <uses-library android:name="org.apache.http.legacy" android:required="false"/>
 

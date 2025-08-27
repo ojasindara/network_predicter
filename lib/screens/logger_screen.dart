@@ -1,9 +1,36 @@
 import 'package:flutter/material.dart';
 import '../data/db.dart';
 import '../data/region_matcher.dart';
-import 'dart:convert'; // <-- needed for jsonEncode
+import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'dart:async';
+import 'package:geolocator/geolocator.dart';
 
+// ------------------ Helper Function for Download Speed ------------------
+Future<double> getDownloadSpeedMbps() async {
+  try {
+    final url = Uri.parse('https://speed.hetzner.de/100MB.bin'); // test file
+    final stopwatch = Stopwatch()..start();
+
+    final request = await HttpClient().getUrl(url);
+    final response = await request.close();
+
+    int bytes = 0;
+    await for (var data in response) {
+      bytes += data.length;
+    }
+
+    stopwatch.stop();
+
+    double mbps = (bytes * 8) / (stopwatch.elapsedMilliseconds / 1000) / 1000000;
+    return mbps;
+  } catch (e) {
+    return 0.0; // fallback if test fails
+  }
+}
+
+// ------------------ LoggerScreen ------------------
 class LoggerScreen extends StatefulWidget {
   const LoggerScreen({super.key});
 
@@ -16,24 +43,29 @@ class _LoggerState extends State<LoggerScreen> {
   final _matcher = RegionMatcher();
 
   double? _lat, _lng;
-  double? _signalDbm;
-  double? _downloadMbps; // set this if you measure throughput
-  String? _netType;
+  double? _signalDbm = -1; // placeholder
+  double? _downloadMbps;
+  String? _netType = "unknown"; // placeholder
 
   bool _isLoading = false;
 
+  // ------------------ Live readings ------------------
   Future<void> _grabLiveReadings() async {
     setState(() => _isLoading = true);
     try {
-      // TODO: Replace with actual GPS + signal fetching logic
-      // For now, just dummy values to prevent null errors
-      await Future.delayed(const Duration(seconds: 1)); // simulate delay
+      // Get GPS
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // Get download speed
+      final speed = await getDownloadSpeedMbps();
+
+      if (!mounted) return;
       setState(() {
-        _lat = 6.5244; // Example: Lagos lat
-        _lng = 3.3792; // Example: Lagos lng
-        _signalDbm = -85;
-        _netType = "4G";
-        _downloadMbps = 12.5;
+        _lat = position.latitude;
+        _lng = position.longitude;
+        _downloadMbps = speed;
       });
     } catch (e) {
       if (!mounted) return;
@@ -45,6 +77,7 @@ class _LoggerState extends State<LoggerScreen> {
     }
   }
 
+  // ------------------ Log to backend ------------------
   Future<void> _logNow() async {
     if (_lat == null || _lng == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -56,10 +89,8 @@ class _LoggerState extends State<LoggerScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Find nearest region
       final match = await _matcher.findNearest(_lat!, _lng!);
 
-      // Save locally first
       await _db.insertLog(
         ts: DateTime.now(),
         lat: _lat!,
@@ -70,8 +101,6 @@ class _LoggerState extends State<LoggerScreen> {
         regionId: match?.regionId,
       );
 
-
-      // Build payload for backend
       final payload = {
         'ts': DateTime.now().toIso8601String(),
         'lat': _lat ?? 0.0,
@@ -79,12 +108,12 @@ class _LoggerState extends State<LoggerScreen> {
         'signal_dbm': _signalDbm ?? 0.0,
         'download_mbps': _downloadMbps ?? 0.0,
         'net_type': _netType ?? 'unknown',
-        'region_id': match?.regionId,  // correct casing
+        'region_id': match?.regionId,
         'region_name': match?.name,
       };
 
       final res = await http.post(
-        Uri.parse("http://10.0.2.2:3000/logCell"), // your backend endpoint
+        Uri.parse("http://10.139.39.204/logCell"),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       );
@@ -103,18 +132,14 @@ class _LoggerState extends State<LoggerScreen> {
         SnackBar(content: Text("Failed to sync: $e")),
       );
     } finally {
+      if (!mounted) return;
       setState(() => _isLoading = false);
     }
   }
 
+  // ------------------ Save Region ------------------
   Future<void> _saveAsRegionDialog() async {
-    if (_lat == null || _lng == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("⚠️ No GPS data to save")),
-      );
-      return;
-    }
+    if (_lat == null || _lng == null) return;
 
     final nameCtrl = TextEditingController();
     final radiusCtrl = TextEditingController(text: '40');
@@ -130,16 +155,12 @@ class _LoggerState extends State<LoggerScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Region name (e.g., My Room)',
-              ),
+              decoration: const InputDecoration(labelText: 'Region name'),
             ),
             TextField(
               controller: radiusCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Match radius (meters)',
-              ),
+              decoration: const InputDecoration(labelText: 'Match radius (m)'),
             ),
           ],
         ),
@@ -173,6 +194,7 @@ class _LoggerState extends State<LoggerScreen> {
     }
   }
 
+  // ------------------ Build UI ------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -193,18 +215,16 @@ class _LoggerState extends State<LoggerScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // show live readings
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('GPS: ${_lat?.toStringAsFixed(5) ?? '--'}, ${_lng?.toStringAsFixed(5) ?? '--'}'),
                 Text('Signal: ${_signalDbm?.toStringAsFixed(0) ?? '--'} dBm'),
                 Text('Speed: ${_downloadMbps?.toStringAsFixed(2) ?? '--'} Mbps'),
+                Text('Net: ${_netType ?? '--'}'),
               ],
             ),
             const SizedBox(height: 12),
-
-            // Buttons with loader state
             FilledButton.icon(
               onPressed: _isLoading ? null : _grabLiveReadings,
               icon: _isLoading
