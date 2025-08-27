@@ -57,7 +57,7 @@ class _LoggerState extends State<LoggerScreen> {
 
     try {
       // Find nearest region
-      final match = _matcher.findNearest(_lat!, _lng!);
+      final match = await _matcher.findNearest(_lat!, _lng!);
 
       // Save locally first
       await _db.insertLog(
