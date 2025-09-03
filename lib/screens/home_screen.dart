@@ -1,13 +1,59 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool isConnected = true;
+  String prediction = "Good";
+
+  LatLng? currentLocation;
+  List<LatLng> historyLocations = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    // Request permission
+    LocationPermission permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      // If denied, keep currentLocation null
+      return;
+    }
+
+    // Get current position
+    Position position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    setState(() {
+      currentLocation = LatLng(position.latitude, position.longitude);
+      historyLocations.add(currentLocation!); // save in history for now
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Dummy data for now
-    final bool isConnected = true;
-    final String prediction = "Good";
+    // Decide map center
+    LatLng initialCenter;
+    if (currentLocation != null) {
+      initialCenter = currentLocation!;
+    } else if (historyLocations.isNotEmpty) {
+      initialCenter = historyLocations.last;
+    } else {
+      initialCenter = const LatLng(6.5244, 3.3792); // Lagos
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -35,16 +81,35 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Map placeholder
-            Container(
+            // Map
+            SizedBox(
               height: 300,
               width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
+              child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Center(
-                child: Text("Map will display here"),
+                child: FlutterMap(
+                  options: MapOptions(
+                    initialCenter: initialCenter,
+                    initialZoom: 13,
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                      subdomains: ['a', 'b', 'c'],
+                    ),
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: initialCenter,
+                          width: 40,
+                          height: 40,
+                          child: const Icon(Icons.location_pin,
+                              color: Colors.red, size: 40),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 20),

@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 // Hive Flutter import for local storage
 import 'package:hive_flutter/hive_flutter.dart';
 
+// Your model
+import 'models/network_log.dart';
+
 // Your app screens (kept in /screens folder)
 import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
@@ -17,6 +20,12 @@ void main() async {
 
   // Initializes Hive local database system (for saving data locally)
   await Hive.initFlutter();
+
+  // ✅ Register the adapter for your model
+  Hive.registerAdapter(NetworkLogAdapter());
+
+  // ✅ Open the box before using it anywhere
+  await Hive.openBox<NetworkLog>('networkLogs');
 
   // Launch the app
   runApp(const MyApp());

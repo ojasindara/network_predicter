@@ -1,118 +1,141 @@
-/*
+// map_screen.dart
 import 'package:flutter/material.dart';
-//import 'package:mapbox_gl/mapbox_gl.dart';
-import 'package:hive/hive.dart';
-import 'package:geolocator/geolocator.dart';
-import '../models/network_log.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
-
-  // Replace with your actual Mapbox public access token
-  static const String mapboxToken = "pk.eyJ1IjoiZGF2aWN0b3Jpb3VzIiwiYSI6ImNtOGZ4NTM0MzBqemgyanNmbTdsMHExOW8ifQ.IShyyHz9myXjsC2AqOzVKg";
 
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
 class _MapScreenState extends State<MapScreen> {
-  late MapboxMapController _mapController;
+  String? _selectedNetwork;
+  WebViewController? _controller;
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Network Map")),
-      body: MapboxMap(
-        accessToken: MapScreen.mapboxToken,
-        initialCameraPosition: const CameraPosition(
-          target: LatLng(6.5244, 3.3792), // Lagos default
-          zoom: 12,
-
-
-      ),
-        onMapCreated: _onMapCreated,
-      ),
-    );
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Show dialog each time the screen opens (after first frame)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showNetworkDialog();
+    });
   }
 
-  Future<void> _onMapCreated(MapboxMapController controller) async {
-    _mapController = controller;
+  Future<void> _initOrLoadControllerForUrl(String url) async {
+    final uri = Uri.parse(url);
 
-    LatLng targetLocation = const LatLng(6.5244, 3.3792); // Default to Lagos
-    double zoomLevel = 14.0;
-
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      LocationPermission permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission != LocationPermission.deniedForever && serviceEnabled) {
-        final position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
-        );
-        targetLocation = LatLng(position.latitude, position.longitude);
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Showing default location (Lagos). Enable location for accurate view."),
+    // If controller not yet created, create it and load the initial URL
+    if (_controller == null) {
+      final controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onNavigationRequest: (request) => NavigationDecision.navigate,
+            onPageStarted: (s) {},
+            onPageFinished: (s) {},
+            onWebResourceError: (err) {
+              // optional: show error
+            },
           ),
         );
-      }
 
-    } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Unable to get location. Using default view (Lagos)."),
-        ),
-      );
+      // load the requested URL
+      await controller.loadRequest(uri);
+
+      if (!mounted) return;
+      setState(() {
+        _controller = controller;
+      });
+    } else {
+      // If controller exists, just load the new URL
+      await _controller!.loadRequest(uri);
     }
+  }
 
-    // Move camera to user's or default location
-    await _mapController.animateCamera(
-      CameraUpdate.newLatLngZoom(targetLocation, zoomLevel),
+  void _showNetworkDialog() async {
+    final network = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Select your network"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text("MTN"),
+                onTap: () => Navigator.pop(context, "MTN"),
+              ),
+              ListTile(
+                title: const Text("Airtel"),
+                onTap: () => Navigator.pop(context, "Airtel"),
+              ),
+              ListTile(
+                title: const Text("Glo"),
+                onTap: () => Navigator.pop(context, "Glo"),
+              ),
+              ListTile(
+                title: const Text("9mobile"),
+                onTap: () => Navigator.pop(context, "9mobile"),
+              ),
+            ],
+          ),
+        );
+      },
     );
 
-    // Add network log pins
-    final logBox = Hive.box<NetworkLog>('networkLogs');
-    final logs = logBox.values.toList();
+    if (!mounted) return;
+    if (network == null) return; // user dismissed dialog
 
-    for (final log in logs) {
-      await _mapController.addSymbol(
-        SymbolOptions(
-          geometry: LatLng(log.latitude, log.longitude),
-          iconImage: "marker-15",
-          iconColor: _getColor(log.signalStrength),
-          iconSize: 1.5,
-        ),
-      );
-    }
+    setState(() {
+      _selectedNetwork = network;
+    });
+
+    // compute url and initialize/load controller
+    final String url = _selectedNetwork == "MTN"
+        ? "https://coverage.mtn.ng"
+        : "https://www.google.com/maps";
+
+    await _initOrLoadControllerForUrl(url);
   }
-
-  // Choose pin color based on signal strength
-  String _getColor(int strength) {
-    if (strength >= 75) return "#2ecc71"; // Green
-    if (strength >= 50) return "#f1c40f"; // Yellow
-    return "#e74c3c"; // Red
-  }
-}
-*/
-
-import 'package:flutter/material.dart';
-
-class MapScreen extends StatelessWidget {
-  const MapScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    if (_selectedNetwork == null || _controller == null) {
+      // either network not chosen yet or controller not ready
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text("Map Placeholder")),
-      body: const Center(
-        child: Text("Map screen temporarily disabled"),
+      appBar: AppBar(
+        title: Text("Map - $_selectedNetwork"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.wifi_find),
+            tooltip: "Change Network",
+            onPressed: _showNetworkDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: "Reload",
+            onPressed: () async {
+              // safe reload - controller is guaranteed non-null here
+              try {
+                await _controller!.reload();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Reload failed: $e")),
+                  );
+                }
+              }
+            },
+          ),
+        ],
       ),
+      body: WebViewWidget(controller: _controller!),
     );
   }
 }
