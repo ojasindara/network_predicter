@@ -1,6 +1,7 @@
-// map_screen.dart
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -10,47 +11,43 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
+  LatLng? _currentLocation;
   String? _selectedNetwork;
-  WebViewController? _controller;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Show dialog each time the screen opens (after first frame)
+  void initState() {
+    super.initState();
+    _determinePosition();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _showNetworkDialog();
     });
   }
 
-  Future<void> _initOrLoadControllerForUrl(String url) async {
-    final uri = Uri.parse(url);
+  Future<void> _determinePosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
 
-    // If controller not yet created, create it and load the initial URL
-    if (_controller == null) {
-      final controller = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onNavigationRequest: (request) => NavigationDecision.navigate,
-            onPageStarted: (s) {},
-            onPageFinished: (s) {},
-            onWebResourceError: (err) {
-              // optional: show error
-            },
-          ),
-        );
-
-      // load the requested URL
-      await controller.loadRequest(uri);
-
-      if (!mounted) return;
-      setState(() {
-        _controller = controller;
-      });
-    } else {
-      // If controller exists, just load the new URL
-      await _controller!.loadRequest(uri);
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return;
     }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      return;
+    }
+
+    final pos = await Geolocator.getCurrentPosition();
+    setState(() {
+      _currentLocation = LatLng(pos.latitude, pos.longitude);
+    });
   }
 
   void _showNetworkDialog() async {
@@ -85,24 +82,14 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     if (!mounted) return;
-    if (network == null) return; // user dismissed dialog
-
     setState(() {
       _selectedNetwork = network;
     });
-
-    // compute url and initialize/load controller
-    final String url = _selectedNetwork == "MTN"
-        ? "https://coverage.mtn.ng"
-        : "https://www.google.com/maps";
-
-    await _initOrLoadControllerForUrl(url);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_selectedNetwork == null || _controller == null) {
-      // either network not chosen yet or controller not ready
+    if (_selectedNetwork == null || _currentLocation == null) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
@@ -110,32 +97,41 @@ class _MapScreenState extends State<MapScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text("Map - $_selectedNetwork"),
+        title: Text("$_selectedNetwork Coverage"),
         actions: [
           IconButton(
-            icon: const Icon(Icons.wifi_find),
-            tooltip: "Change Network",
+            icon: const Icon(Icons.network_wifi),
             onPressed: _showNetworkDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: "Reload",
-            onPressed: () async {
-              // safe reload - controller is guaranteed non-null here
-              try {
-                await _controller!.reload();
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Reload failed: $e")),
-                  );
-                }
-              }
-            },
           ),
         ],
       ),
-      body: WebViewWidget(controller: _controller!),
+      body: FlutterMap(
+        options: MapOptions(
+          initialCenter: _currentLocation!,
+          initialZoom: 14,
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            subdomains: ['a', 'b', 'c'],
+          ),
+          MarkerLayer(
+            markers: [
+              Marker(
+                point: _currentLocation!,
+                width: 50,
+                height: 50,
+                child: const Icon(
+                  Icons.my_location,
+                  color: Colors.blue,
+                  size: 40,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
+

@@ -1,19 +1,19 @@
 // logger_screen.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_internet_speed_test/flutter_internet_speed_test.dart';
 
 import '../data/db.dart';
 import '../data/region_matcher.dart';
 import '../models/network_log.dart';
+import '../services/netspeed.dart'; // <-- your EventChannel wrapper
 
-const String backendUrl = "http://10.139.39.204/logCell"; // change to your backend
+const String backendUrl = "http://10.139.39.204/logCell"; // change as needed
 
 class LoggerScreen extends StatefulWidget {
   const LoggerScreen({super.key});
@@ -25,142 +25,136 @@ class LoggerScreen extends StatefulWidget {
 class _LoggerState extends State<LoggerScreen> {
   final _db = AppDB();
   final _matcher = RegionMatcher();
+  final _speedTester = FlutterInternetSpeedTest();
 
   double? _lat, _lng;
-  double? _signalDbm = -1; // placeholder (you may update with actual reading)
   double? _downloadMbps;
+  double? _uploadMbps;
+  double? _signalDbm = -1;
   String? _netType = "unknown";
 
   bool _isLoading = false;
+  double? _lastTestedSpeed;
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
+    NetSpeed.start();
   }
 
-  // ------------------- Permissions -------------------
+  // ---------------- Permissions ----------------
   Future<void> _requestPermissions() async {
-    // Location via Geolocator
     LocationPermission perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
       perm = await Geolocator.requestPermission();
     }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      // note: if denied forever, user must open settings to enable
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Location permission denied. Some features won't work.")),
-      );
-    }
-
-    // Other permissions (storage, camera) if you truly need them
-    final others = <Permission>[Permission.storage, Permission.camera];
-    for (final p in others) {
-      final status = await p.status;
-      if (status.isDenied) {
-        final req = await p.request();
-        if (req.isPermanentlyDenied) {
-          // Let user know
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${p.toString()} permanently denied. Please enable in settings.')),
-          );
-        }
-      }
-    }
   }
 
-  // ------------------- Download speed (bounded) -------------------
-  /// Downloads up to [maxBytesToRead] bytes or until [timeoutSec] seconds pass,
-  /// then returns an estimate of Mbps.
-  Future<double> getDownloadSpeedMbps({int maxBytesToRead = 3 * 1024 * 1024, int timeoutSec = 15}) async {
+  // ---------------- Speed formatting helper ----------------
+  String _formatSpeed(double? rate, SpeedUnit unit) {
+    if (rate == null) return '--';
+    return '${rate.toStringAsFixed(2)} ${unit.name}';
+  }
+
+  /// Helper goes above _runSpeedTest (or anywhere in the class)
+  double _extractRate(dynamic r) {
+    if (r == null) return 0.0;
+    if (r is double) return r;
+    if (r is num) return r.toDouble();
+
     try {
-      final url = Uri.parse('https://speed.hetzner.de/100MB.bin');
-      final stopwatch = Stopwatch()..start();
-      final client = HttpClient();
-      client.connectionTimeout = Duration(seconds: timeoutSec);
+      final tr = r.transferRate;
+      if (tr == null) return 0.0;
+      if (tr is double) return tr;
+      if (tr is num) return tr.toDouble();
 
-      final request = await client.getUrl(url).timeout(Duration(seconds: timeoutSec));
-      final response = await request.close().timeout(Duration(seconds: timeoutSec));
+      final val = tr.value;
+      if (val is double) return val;
+      if (val is num) return val.toDouble();
+    } catch (_) {}
 
-      int bytesRead = 0;
-      final completer = Completer<void>();
-      final subscription = response.listen(
-            (data) {
-          bytesRead += data.length;
-          if (bytesRead >= maxBytesToRead && !completer.isCompleted) {
-            completer.complete();
-          }
+    return 0.0;
+  }
+
+
+  // ---------------- One-time Speed Test ----------------
+  Future<Map<String, double>> _runSpeedTest({int timeoutSec = 20}) async {
+    final Completer<double> download = Completer();
+    final Completer<double> upload = Completer();
+
+    Timer? timer;
+    timer = Timer(Duration(seconds: timeoutSec), () {
+      if (!download.isCompleted) download.complete(0.0);
+      if (!upload.isCompleted) upload.complete(0.0);
+      try {
+        _speedTester.cancelTest();
+      } catch (_) {}
+    });
+
+    try {
+      await _speedTester.startTesting(
+        onCompleted: (downloadResult, uploadResult) {
+          if (!download.isCompleted) download.complete(_extractRate(downloadResult));
+          if (!upload.isCompleted) upload.complete(_extractRate(uploadResult));
         },
-        onDone: () => completer.complete(),
-        onError: (e) {
-          if (!completer.isCompleted) completer.complete();
+        onDownloadComplete: (d) {
+          if (!download.isCompleted) download.complete(_extractRate(d));
         },
-        cancelOnError: true,
+        onUploadComplete: (u) {
+          if (!upload.isCompleted) upload.complete(_extractRate(u));
+        },
+        onError: (String errorMessage, String speedTestError) {
+          if (!download.isCompleted) download.complete(0.0);
+          if (!upload.isCompleted) upload.complete(0.0);
+        },
       );
 
-      // Wait until we either read enough or timeout
-      await completer.future.timeout(Duration(seconds: timeoutSec), onTimeout: () {
-        // If timeout, cancel subscription
-        subscription.cancel();
-      });
-      stopwatch.stop();
-      await subscription.cancel();
-      client.close(force: true);
-
-      if (stopwatch.elapsedMilliseconds == 0) return 0.0;
-
-      // bytes -> bits, divide by seconds, convert to megabits
-      final mbps = (bytesRead * 8) / (stopwatch.elapsedMilliseconds / 1000) / 1000000;
-      return mbps.isFinite ? mbps : 0.0;
-    } catch (e) {
-      // Don't crash the app if the test fails
-      return 0.0;
+      final res = {
+        'download': await download.future,
+        'upload': await upload.future,
+      };
+      timer?.cancel();
+      return res;
+    } catch (_) {
+      timer?.cancel();
+      return {'download': 0.0, 'upload': 0.0};
     }
   }
 
-  // ------------------- Live readings -------------------
+
+
+  // ---------------- Refresh Live Readings ----------------
   Future<void> _grabLiveReadings() async {
     setState(() => _isLoading = true);
     try {
-      // Location
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      // Speed test
-      final speed = await getDownloadSpeedMbps();
-
+      final pos = await Geolocator.getCurrentPosition();
+      final speeds = await _runSpeedTest();
       if (!mounted) return;
       setState(() {
-        _lat = position.latitude;
-        _lng = position.longitude;
-        _downloadMbps = speed;
+        _lat = pos.latitude;
+        _lng = pos.longitude;
+        _downloadMbps = speeds['download'];
+        _uploadMbps = speeds['upload'];
+        _lastTestedSpeed = _downloadMbps;
       });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error fetching readings: $e")),
-      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // ------------------- Log now: save locally (Hive) + local DB + remote -------------------
+  // ---------------- Log Now (local + remote) ----------------
   Future<void> _logNow() async {
     if (_lat == null || _lng == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No GPS fix yet. Please refresh readings first.")),
+        const SnackBar(content: Text("No GPS fix yet. Refresh readings first.")),
       );
       return;
     }
-
     setState(() => _isLoading = true);
-
     try {
       final match = await _matcher.findNearest(_lat!, _lng!);
 
-      // Insert to your local DB (existing AppDB)
       await _db.insertLog(
         ts: DateTime.now(),
         lat: _lat!,
@@ -171,199 +165,141 @@ class _LoggerState extends State<LoggerScreen> {
         regionId: match?.regionId,
       );
 
-      // Also save to Hive so HistoryScreen (which reads Hive) will show it
-      try {
-        final hiveBox = Hive.box<NetworkLog>('networkLogs');
-        final log = NetworkLog(
-          timestamp: DateTime.now(),
-          latitude: _lat!,
-          longitude: _lng!,
-          signalStrength: (_signalDbm ?? 0).toInt(),
-        );
-        await hiveBox.add(log);
-      } catch (e) {
-        // If Hive fails, do not block overall logging — just notify
-        debugPrint("Failed to save to Hive: $e");
-      }
+      // Hive save
+      final hiveBox = Hive.box<NetworkLog>('networkLogs');
+      await hiveBox.add(NetworkLog(
+        timestamp: DateTime.now(),
+        latitude: _lat!,
+        longitude: _lng!,
+        signalStrength: (_signalDbm ?? 0).toInt(),
+        downloadSpeed: _downloadMbps ?? 0.0,
+        uploadSpeed: _uploadMbps ?? 0.0,
+      ));
 
-      // Prepare remote payload
+      // Remote sync
       final payload = {
         'ts': DateTime.now().toIso8601String(),
-        'lat': _lat ?? 0.0,
-        'lng': _lng ?? 0.0,
-        'signal_dbm': _signalDbm ?? 0.0,
-        'download_mbps': _downloadMbps ?? 0.0,
-        'net_type': _netType ?? 'unknown',
+        'lat': _lat!,
+        'lng': _lng!,
+        'signal_dbm': _signalDbm ?? 0,
+        'download_mbps': _downloadMbps ?? 0,
+        'upload_mbps': _uploadMbps ?? 0,
+        'net_type': _netType,
         'region_id': match?.regionId,
         'region_name': match?.name,
       };
-
-      // POST to remote backend (non-blocking if remote fails)
-      try {
-        final res = await http
-            .post(
-          Uri.parse(backendUrl),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(payload),
-        )
-            .timeout(const Duration(seconds: 10));
-
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Log saved locally and synced to server.")),
-          );
-        } else {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Server error: ${res.statusCode}. Saved locally.")),
-          );
-        }
-      } catch (e) {
-        // Network error — we already saved locally, inform user
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Saved locally — failed to sync to server.")),
-        );
-      }
+      await http.post(
+        Uri.parse(backendUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("✅ Log saved & synced.")),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to log: $e")),
+        SnackBar(content: Text("Saved locally. Sync failed: $e")),
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // ------------------- Save Region (unchanged) -------------------
+  // ---------------- Save as Region ----------------
   Future<void> _saveAsRegionDialog() async {
     if (_lat == null || _lng == null) return;
-
     final nameCtrl = TextEditingController();
     final radiusCtrl = TextEditingController(text: '40');
 
-    final result = await showDialog<bool>(
+    final res = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Save this location as a region'),
+        title: const Text("Save as Region"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('GPS: ${_lat!.toStringAsFixed(6)}, ${_lng!.toStringAsFixed(6)}'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Region name'),
-            ),
-            TextField(
-              controller: radiusCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Match radius (m)'),
-            ),
+            Text("GPS: ${_lat!.toStringAsFixed(6)}, ${_lng!.toStringAsFixed(6)}"),
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "Name")),
+            TextField(controller: radiusCtrl, decoration: const InputDecoration(labelText: "Radius (m)")),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Save'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text("Save")),
         ],
       ),
     );
-
-    if (result == true) {
-      try {
-        final r = int.tryParse(radiusCtrl.text.trim()) ?? 40;
-        await _db.insertRegion(nameCtrl.text.trim(), _lat!, _lng!, radiusM: r);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Region saved')),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("❌ Failed to save region: $e")),
-        );
-      }
+    if (res == true) {
+      await _db.insertRegion(nameCtrl.text, _lat!, _lng!,
+          radiusM: int.tryParse(radiusCtrl.text) ?? 40);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("✅ Region saved")),
+      );
     }
   }
 
-  // ------------------- Build UI -------------------
+  // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Logger'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.place),
-            onPressed: () => Navigator.pushNamed(context, '/regions'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            onPressed: () => Navigator.pushNamed(context, '/compare'),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text("Logger")),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // Live NetSpeed from EventChannel
+            StreamBuilder<Map<String, double>>(
+              stream: NetSpeed.speedStream,
+              builder: (context, snap) {
+                if (!snap.hasData) return const Text("Waiting for live speed...");
+                final dl = snap.data!["download"] ?? 0.0;
+                final ul = snap.data!["upload"] ?? 0.0;
+                return Column(
+                  children: [
+                    Text(
+                      "↓ ${dl.toStringAsFixed(2)} KB/s   ↑ ${ul.toStringAsFixed(2)} KB/s",
+                      style: const TextStyle(fontSize: 16, color: Colors.green),
+                    ),
+                    if (_lastTestedSpeed != null)
+                      Text(
+                        "Last Tested: ${_lastTestedSpeed!.toStringAsFixed(2)} Mbps",
+                        style: const TextStyle(fontSize: 16, color: Colors.blue),
+                      ),
+                  ],
+                );
+
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // GPS + dBm + manual test
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(child: Text('GPS: ${_lat?.toStringAsFixed(5) ?? '--'}, ${_lng?.toStringAsFixed(5) ?? '--'}')),
-                const SizedBox(width: 8),
-                Text('Signal: ${_signalDbm?.toStringAsFixed(0) ?? '--'} dBm'),
-                const SizedBox(width: 8),
-                Text('Speed: ${_downloadMbps?.toStringAsFixed(2) ?? '--'} Mbps'),
-                const SizedBox(width: 8),
-                Text('Net: ${_netType ?? '--'}'),
+                Expanded(child: Text("GPS: ${_lat?.toStringAsFixed(5) ?? '--'}, ${_lng?.toStringAsFixed(5) ?? '--'}")),
+                Text("Sig: ${_signalDbm?.toStringAsFixed(0)} dBm"),
               ],
             ),
             const SizedBox(height: 12),
 
-            // full-width refresh button
-            SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: FilledButton.icon(
-                onPressed: _isLoading ? null : _grabLiveReadings,
-                icon: _isLoading
-                    ? const SizedBox(
-                  height: 16,
-                  width: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-                    : const Icon(Icons.refresh),
-                label: Text(_isLoading ? 'Please wait...' : 'Refresh readings'),
-              ),
+            // Buttons
+            ElevatedButton.icon(
+              onPressed: _isLoading ? null : _grabLiveReadings,
+              icon: const Icon(Icons.refresh),
+              label: Text(_isLoading ? "Please wait..." : "Refresh readings"),
             ),
             const SizedBox(height: 8),
-
-            // full-width log button
-            SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: FilledButton.icon(
-                onPressed: _isLoading ? null : _logNow,
-                icon: const Icon(Icons.save),
-                label: const Text('Log now'),
-              ),
+            ElevatedButton.icon(
+              onPressed: _isLoading ? null : _logNow,
+              icon: const Icon(Icons.save),
+              label: const Text("Log Now"),
             ),
             const SizedBox(height: 8),
-
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: _isLoading ? null : _saveAsRegionDialog,
-                child: const Text('Save this as a region'),
-              ),
+            OutlinedButton(
+              onPressed: _isLoading ? null : _saveAsRegionDialog,
+              child: const Text("Save as Region"),
             ),
           ],
         ),
@@ -371,3 +307,4 @@ class _LoggerState extends State<LoggerScreen> {
     );
   }
 }
+
