@@ -2,9 +2,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../services/cell_info_service.dart'; // adjust path if needed
 import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_internet_signal/flutter_internet_signal.dart';
+import 'package:telephony/telephony.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_internet_speed_test/flutter_internet_speed_test.dart';
 
@@ -25,7 +28,9 @@ class LoggerScreen extends StatefulWidget {
 class _LoggerState extends State<LoggerScreen> {
   final _db = AppDB();
   final _matcher = RegionMatcher();
+  final Telephony telephony = Telephony.instance;
   final _speedTester = FlutterInternetSpeedTest();
+
 
   double? _lat, _lng;
   double? _downloadMbps;
@@ -45,11 +50,31 @@ class _LoggerState extends State<LoggerScreen> {
 
   // ---------------- Permissions ----------------
   Future<void> _requestPermissions() async {
-    LocationPermission perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
+    // Location permission
+    LocationPermission locPerm = await Geolocator.checkPermission();
+    if (locPerm == LocationPermission.denied) {
+      locPerm = await Geolocator.requestPermission();
+    }
+
+    // Telephony permission
+    final phoneState = await Permission.phone.status;
+    if (!phoneState.isGranted) {
+      await Permission.phone.request();
     }
   }
+  Future<void> _updateSignalStrength() async {
+    try {
+      final int? dbm = await FlutterInternetSignal().getMobileSignalStrength();
+      if (dbm != null) {
+        setState(() {
+          _signalDbm = dbm.toDouble();
+        });
+      }
+    } catch (e) {
+      debugPrint("Error getting mobile signal: $e");
+    }
+  }
+
 
   // ---------------- Speed formatting helper ----------------
   String _formatSpeed(double? rate, SpeedUnit unit) {
@@ -78,49 +103,23 @@ class _LoggerState extends State<LoggerScreen> {
   }
 
 
-  // ---------------- One-time Speed Test ----------------
-  Future<Map<String, double>> _runSpeedTest({int timeoutSec = 20}) async {
-    final Completer<double> download = Completer();
-    final Completer<double> upload = Completer();
+  Future<Map<String, double>> _runSpeedTest({int samples = 5, int timeoutSec = 5, int delaySec = 3}) async {
+    double totalDownload = 0.0;
+    double totalUpload = 0.0;
 
-    Timer? timer;
-    timer = Timer(Duration(seconds: timeoutSec), () {
-      if (!download.isCompleted) download.complete(0.0);
-      if (!upload.isCompleted) upload.complete(0.0);
-      try {
-        _speedTester.cancelTest();
-      } catch (_) {}
-    });
-
-    try {
-      await _speedTester.startTesting(
-        onCompleted: (downloadResult, uploadResult) {
-          if (!download.isCompleted) download.complete(_extractRate(downloadResult));
-          if (!upload.isCompleted) upload.complete(_extractRate(uploadResult));
-        },
-        onDownloadComplete: (d) {
-          if (!download.isCompleted) download.complete(_extractRate(d));
-        },
-        onUploadComplete: (u) {
-          if (!upload.isCompleted) upload.complete(_extractRate(u));
-        },
-        onError: (String errorMessage, String speedTestError) {
-          if (!download.isCompleted) download.complete(0.0);
-          if (!upload.isCompleted) upload.complete(0.0);
-        },
-      );
-
-      final res = {
-        'download': await download.future,
-        'upload': await upload.future,
-      };
-      timer?.cancel();
-      return res;
-    } catch (_) {
-      timer?.cancel();
-      return {'download': 0.0, 'upload': 0.0};
+    for (int i = 0; i < samples; i++) {
+      final speeds = await _runSpeedTest(timeoutSec: timeoutSec);
+      totalDownload += speeds['download'] ?? 0.0;
+      totalUpload += speeds['upload'] ?? 0.0;
+      await Future.delayed(Duration(seconds: delaySec)); // small pause between samples
     }
+
+    return {
+      'download': totalDownload / samples,
+      'upload': totalUpload / samples,
+    };
   }
+
 
 
 
@@ -151,8 +150,11 @@ class _LoggerState extends State<LoggerScreen> {
       );
       return;
     }
+
     setState(() => _isLoading = true);
+
     try {
+      // ---------------- Local DB + Hive ----------------
       final match = await _matcher.findNearest(_lat!, _lng!);
 
       await _db.insertLog(
@@ -165,7 +167,6 @@ class _LoggerState extends State<LoggerScreen> {
         regionId: match?.regionId,
       );
 
-      // Hive save
       final hiveBox = Hive.box<NetworkLog>('networkLogs');
       await hiveBox.add(NetworkLog(
         timestamp: DateTime.now(),
@@ -176,27 +177,37 @@ class _LoggerState extends State<LoggerScreen> {
         uploadSpeed: _uploadMbps ?? 0.0,
       ));
 
-      // Remote sync
+      // ---------------- Get Cell Info ----------------
+      final cellInfo = await CellInfoService.getCellInfo(); // <-- your MethodChannel
+      if (cellInfo == null) throw Exception("No cell info available");
+
+      // ---------------- Remote sync (backend-friendly format) ----------------
       final payload = {
-        'ts': DateTime.now().toIso8601String(),
-        'lat': _lat!,
-        'lng': _lng!,
-        'signal_dbm': _signalDbm ?? 0,
-        'download_mbps': _downloadMbps ?? 0,
-        'upload_mbps': _uploadMbps ?? 0,
-        'net_type': _netType,
-        'region_id': match?.regionId,
-        'region_name': match?.name,
+        "cid": cellInfo["cid"],
+        "lac": cellInfo["tac"] ?? 0, // LTE uses TAC instead of LAC
+        "mcc": cellInfo["mcc"],
+        "mnc": cellInfo["mnc"],
+        "lat": _lat,
+        "lon": _lng,
+        "timestamp": DateTime.now().toUtc().toIso8601String(),
+        "signal": cellInfo["signalDbm"],
       };
-      await http.post(
+
+      final response = await http.post(
         Uri.parse(backendUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: {"Content-Type": "application/json"},
         body: jsonEncode(payload),
       );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("✅ Log saved & synced.")),
-      );
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("✅ Log saved & synced.")),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Saved locally. Sync failed: ${response.body}")),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -206,6 +217,7 @@ class _LoggerState extends State<LoggerScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
+
 
   // ---------------- Save as Region ----------------
   Future<void> _saveAsRegionDialog() async {

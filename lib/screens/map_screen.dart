@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 
+
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
 
@@ -13,6 +14,10 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   LatLng? _currentLocation;
   String? _selectedNetwork;
+  List<Marker> _networkMarkers = [];
+  bool _isLoading = false;
+
+  final LatLng _futaLocation = LatLng(7.2622, 5.1200); // FUTA, Akure
 
   @override
   void initState() {
@@ -24,25 +29,16 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return;
-    }
-
-    permission = await Geolocator.checkPermission();
+    LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return;
-      }
+      if (permission == LocationPermission.denied) return;
     }
 
-    if (permission == LocationPermission.deniedForever) {
-      return;
-    }
+    if (permission == LocationPermission.deniedForever) return;
 
     final pos = await Geolocator.getCurrentPosition();
     setState(() {
@@ -81,33 +77,79 @@ class _MapScreenState extends State<MapScreen> {
       },
     );
 
-    if (!mounted) return;
+    if (!mounted || network == null) return;
+
     setState(() {
       _selectedNetwork = network;
     });
+
+    _fetchNetworkData(network);
+  }
+
+  Future<void> _fetchNetworkData(String network) async {
+    setState(() {
+      _isLoading = true;
+      _networkMarkers = [];
+    });
+
+    try {
+      await Future.delayed(const Duration(seconds: 1)); // simulate fetch
+
+      if (network == "MTN") {
+        _networkMarkers = [
+          Marker(
+            point: _futaLocation,
+            width: 50,
+            height: 50,
+            child: const Icon(
+              Icons.location_on,
+              color: Colors.green,
+              size: 40,
+            ),
+          ),
+        ];
+      } else {
+        _networkMarkers = [
+          Marker(
+            point: _futaLocation,
+            width: 50,
+            height: 50,
+            child: const Icon(
+              Icons.location_on,
+              color: Colors.blue,
+              size: 40,
+            ),
+          ),
+        ];
+      }
+}    catch (e) {
+      print("Error fetching network data: $e");
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Uri? _getCoverageUrl() {
+    if (_selectedNetwork == "MTN") return Uri.parse("https://coverage.mtn.ng/");
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_selectedNetwork == null || _currentLocation == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
+    // ✅ Retrieve arguments from Navigator
+    final args = ModalRoute.of(context)!.settings.arguments as Map;
+    final LatLng location = args['location'];
+    final bool hasLocation = args['hasLocation'];
 
     return Scaffold(
       appBar: AppBar(
-        title: Text("$_selectedNetwork Coverage"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.network_wifi),
-            onPressed: _showNetworkDialog,
-          ),
-        ],
+        title: Text(hasLocation ? "Map View (Logged)" : "Map View (Default)"),
       ),
       body: FlutterMap(
         options: MapOptions(
-          initialCenter: _currentLocation!,
+          initialCenter: location,
           initialZoom: 14,
         ),
         children: [
@@ -118,12 +160,12 @@ class _MapScreenState extends State<MapScreen> {
           MarkerLayer(
             markers: [
               Marker(
-                point: _currentLocation!,
-                width: 50,
-                height: 50,
-                child: const Icon(
-                  Icons.my_location,
-                  color: Colors.blue,
+                point: location,
+                width: 40,
+                height: 40,
+                child: Icon(
+                  hasLocation ? Icons.my_location : Icons.location_pin,
+                  color: hasLocation ? Colors.blue : Colors.red,
                   size: 40,
                 ),
               ),
@@ -134,4 +176,3 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 }
-

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -13,23 +14,84 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
   // Default FUTA, Akure
-  final LatLng initialCenter = LatLng(7.3066, 5.1376);
+  LatLng initialCenter = LatLng(7.3066, 5.1376);
+  bool hasLocation = false; // track if location is available
+
+  @override
+  void initState() {
+    super.initState();
+    _determinePosition();
+  }
+
+  Future<void> _determinePosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Check if GPS is ON
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      // Default to FUTA
+      return;
+    }
+
+    // Check permissions
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        // Still denied → fallback FUTA
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      // Cannot request anymore → fallback FUTA
+      return;
+    }
+
+    // If we reach here → Location is available
+    Position position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high, // can also use best, medium, low
+          distanceFilter: 0,               // update whenever device moves
+        ),
+    );
+
+    setState(() {
+      initialCenter = LatLng(position.latitude, position.longitude);
+      hasLocation = true;
+    });
+  }
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
 
-    // Navigate to each page
+    // Pass location state to other pages
     switch (index) {
       case 0:
-        Navigator.pushNamed(context, '/logger');
+        Navigator.pushNamed(
+          context,
+          '/logger',
+          arguments: {
+            'location': initialCenter,
+            'hasLocation': hasLocation,
+          },
+        );
         break;
       case 1:
         Navigator.pushNamed(context, '/history');
         break;
       case 2:
-        Navigator.pushNamed(context, '/map');
+        Navigator.pushNamed(
+          context,
+          '/map',
+          arguments: {
+            'location': initialCenter,
+            'hasLocation': hasLocation,
+          },
+        );
         break;
     }
   }
@@ -38,12 +100,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Network Tracker"),
+        title: const Text("A SYSTEM FOR INTERNET AVAILABILITY DATA LOGGING, MAPPING AND PREDICTION"),
         backgroundColor: Theme.of(context).colorScheme.primary,
       ),
       body: Column(
         children: [
-          // Map widget at top
+          // Map widget
           SizedBox(
             height: 300,
             width: double.infinity,
@@ -66,9 +128,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         point: initialCenter,
                         width: 40,
                         height: 40,
-                        child: const Icon(
-                          Icons.location_pin,
-                          color: Colors.red,
+                        child: Icon(
+                          hasLocation ? Icons.my_location : Icons.location_pin,
+                          color: hasLocation ? Colors.blue : Colors.red,
                           size: 40,
                         ),
                       ),
@@ -80,19 +142,18 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 20),
 
-          // Middle body content
           Expanded(
             child: Center(
               child: Text(
-                "Select an option below",
+                hasLocation
+                    ? "Using your current location"
+                    : "Using FUTA as default (No logs saved)",
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
           ),
         ],
       ),
-
-      // 🔹 Bottom Navigation Bar replaces buttons
       bottomNavigationBar: BottomNavigationBar(
         items: const [
           BottomNavigationBarItem(
