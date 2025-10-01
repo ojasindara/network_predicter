@@ -12,23 +12,28 @@ import 'screens/home_screen.dart';
 import 'screens/logger_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/map_screen.dart';
+import 'package:provider/provider.dart';
+import 'providers/logger_provider.dart'; // adjust path if needed
+
 import 'screens/compare_screen.dart';
 
 void main() async {
-  // Ensures widgets are properly initialized before any async code
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initializes Hive local database system (for saving data locally)
+  // Hive initialization
   await Hive.initFlutter();
-
-  // ✅ Register the adapter for your model
   Hive.registerAdapter(NetworkLogAdapter());
-
-  // ✅ Open the box before using it anywhere
   await Hive.openBox<NetworkLog>('networkLogs');
 
-  // Launch the app
-  runApp(const MyApp());
+  // Launch the app with Provider
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => LoggerProvider()..init()),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 // Root widget of the entire app

@@ -1,6 +1,6 @@
 import 'package:hive/hive.dart';
 
-part 'network_log.g.dart';
+part 'network_log.g.dart'; // 👈 Don't forget to rebuild Hive adapters when you add fields
 
 @HiveType(typeId: 0)
 class NetworkLog extends HiveObject {
@@ -22,6 +22,9 @@ class NetworkLog extends HiveObject {
   @HiveField(5)
   final double uploadSpeed; // Mbps
 
+  @HiveField(6) // 👈 New field
+  final String region;
+
   NetworkLog({
     required this.timestamp,
     required this.latitude,
@@ -29,9 +32,9 @@ class NetworkLog extends HiveObject {
     required this.signalStrength,
     required this.downloadSpeed,
     required this.uploadSpeed,
+    this.region = "", // default empty if not provided
   });
 
-  // For converting to JSON when sending to backend
   Map<String, dynamic> toMap() {
     return {
       'timestamp': timestamp.toIso8601String(),
@@ -40,20 +43,19 @@ class NetworkLog extends HiveObject {
       'signalStrength': signalStrength,
       'downloadSpeed': downloadSpeed,
       'uploadSpeed': uploadSpeed,
+      'region': region, // 👈 include region
     };
   }
 
-  // For converting from JSON when receiving from backend
   factory NetworkLog.fromMap(Map<String, dynamic> map) {
     return NetworkLog(
       timestamp: DateTime.parse(map['timestamp']),
       latitude: (map['latitude'] as num).toDouble(),
       longitude: (map['longitude'] as num).toDouble(),
-      signalStrength: map['signalStrength'] is int
-          ? map['signalStrength'] as int
-          : (map['signalStrength'] as num).toInt(),
+      signalStrength: (map['signalStrength'] as num).toInt(),
       downloadSpeed: (map['downloadSpeed'] as num).toDouble(),
       uploadSpeed: (map['uploadSpeed'] as num).toDouble(),
+      region: map['region'] ?? "", // 👈 load region
     );
   }
 }

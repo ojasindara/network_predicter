@@ -1,0 +1,44 @@
+[
+  {
+    "name": "3-in-1 Lecture Room",
+    "latitude": 7.2954,
+    "longitude": 5.1350,
+    "avg_download": 3.00,
+    "avg_upload": 2.7228
+  },
+  {
+    "name": "FBN",
+    "latitude": 7.2954,
+    "longitude": 5.1349,
+    "avg_download": 0.0566,
+    "avg_upload": 0.03258
+  },
+  {
+    "name": "Library",
+    "latitude": 7.2952,
+    "longitude": 5.1351,
+    "avg_download": 0.80,
+    "avg_upload": 0.75
+  },
+  {
+    "name": "My Room",
+    "latitude": 7.2953,
+    "longitude": 5.1349,
+    "avg_download": 0.10,
+    "avg_upload": 0.7574468
+  },
+  {
+    "name": "Sese Building",
+    "latitude": 7.2955,
+    "longitude": 5.1350,
+    "avg_download": 0.15,
+    "avg_upload": 0.08
+  },
+  {
+    "name": "Toheeb’s Room",
+    "latitude": 7.2953,
+    "longitude": 5.1350,
+    "avg_download": 0.05,
+    "avg_upload": 0.02
+  }
+]

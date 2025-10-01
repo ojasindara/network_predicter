@@ -21,7 +21,7 @@ class _SplashScreenState extends State<SplashScreen> {
     return Scaffold(
       body: Center(
         child: Text(
-          "Network Tracker",
+          "Network Logging, Coverage Mapping and Internet speed Predicting App",
           style: Theme.of(context).textTheme.headlineMedium,
         ),
       ),
