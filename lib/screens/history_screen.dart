@@ -65,8 +65,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ),
                 subtitle: Text(
                   "Signal: ${log.signalStrength} | "
-                      "DL: ${log.downloadSpeed.toStringAsFixed(2)} Mbps | "
-                      "UL: ${log.uploadSpeed.toStringAsFixed(2)} Mbps | "
+                      "DL: ${log.downloadSpeed.toStringAsFixed(2)} Kbps | "
+                      "UL: ${log.uploadSpeed.toStringAsFixed(2)} Kbps | "
                       "Time: $formattedTime",
                 ),
               );

@@ -252,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     provider.currentPosition?.latitude ?? defaultLat,
                     provider.currentPosition?.longitude ?? defaultLng,
                   ),
-                  initialZoom: 19,
+                  initialZoom: 17,
                 ),
                 children: [
                   TileLayer(
@@ -356,7 +356,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Text(
                     hasLocation
                         ? "Using your current location"
-                        : "Turn on Location for more accuracy",
+                        : "Using approximate location",
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),

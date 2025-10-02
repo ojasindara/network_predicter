@@ -1,26 +1,21 @@
 // logger_screen.dart
-// Replace your existing LoggerScreen with this file.
-// It would require the same imports you already have in your project.
-
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../services/cell_info_service.dart'; // adjust path if needed
-import '../services/network_speed_test.dart';
-import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:flutter_internet_signal/flutter_internet_signal.dart';
-import 'package:http/http.dart' as http;
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter_internet_speed_test/flutter_internet_speed_test.dart';
+import 'package:flutter_internet_signal/flutter_internet_signal.dart';
+import 'package:hive/hive.dart';
+import 'package:http/http.dart' as http;
 
 import '../data/db.dart';
 import '../data/region_matcher.dart';
 import '../models/network_log.dart';
-import '../services/netspeed.dart'; // your EventChannel wrapper
+import '../services/netspeed.dart';
+import '../services/cell_info_service.dart';
 
-const String backendUrl = "http://10.139.39.204/logCell"; // change as needed
+const String backendUrl = "http://10.139.39.204/logCell"; // adjust as needed
 
 class LoggerScreen extends StatefulWidget {
   const LoggerScreen({super.key});
@@ -32,18 +27,31 @@ class LoggerScreen extends StatefulWidget {
 class _LoggerState extends State<LoggerScreen> {
   final _db = AppDB();
   final _matcher = RegionMatcher();
-  final FlutterInternetSpeedTest _speedTester = FlutterInternetSpeedTest();
-  Timer? _logTimer;
-  final int _logIntervalSec = 60; // log every 60 seconds
 
+  Timer? _logTimer;
+  final int _logIntervalSec = 60;
+
+  // GPS / signal / network
   double? _lat, _lng;
-  double? _downloadMbps;
-  double? _uploadMbps;
   double? _signalDbm = -1;
   String? _netType = "unknown";
 
+  // Tested speeds (Mbps)
+  double? _downloadMbps;
+  double? _uploadMbps;
+
+  // Live stream values (KB/s)
+  double _liveDownloadKb = 0.0;
+  double _liveUploadKb = 0.0;
+
+  // Freeze last stream value
+  Map<String, double> _lastStreamValue = {"download": 0.0, "upload": 0.0};
+  double? _lastDlTested;
+  double? _lastUlTested;
+
   bool _isLoading = false;
-  double? _lastTestedSpeed;
+  bool _isAutoLogging = false;
+  bool _isLogging = false;
 
   @override
   void initState() {
@@ -52,45 +60,34 @@ class _LoggerState extends State<LoggerScreen> {
     NetSpeed.start();
   }
 
+  @override
+  void dispose() {
+    _logTimer?.cancel();
+    try {
+      NetSpeed.stop();
+    } catch (_) {}
+    super.dispose();
+  }
+
   // ---------------- Permissions ----------------
   Future<void> _requestPermissions() async {
-    // Location permission
     LocationPermission locPerm = await Geolocator.checkPermission();
     if (locPerm == LocationPermission.denied) {
       locPerm = await Geolocator.requestPermission();
     }
-
-    // Telephony permission
-    final phoneState = await Permission.phone.status;
-    if (!phoneState.isGranted) {
+    if (!await Permission.phone.isGranted) {
       await Permission.phone.request();
     }
   }
 
-  // ---------------- Rate extractor (robust) ----------------
-  double _extractRate(dynamic tr) {
+  Future<void> _ensureHiveBoxOpen() async {
     try {
-      if (tr == null) return 0.0;
-      // Many TestResult shapes expose transferRate or transferRateInMbps, try both
-      if (tr is double) return tr;
-      if (tr is num) return tr.toDouble();
-
-      if (tr.transferRate != null) {
-        final v = tr.transferRate;
-        if (v is num) return v.toDouble();
-        if (v is String) return double.tryParse(v) ?? 0.0;
+      if (!Hive.isBoxOpen('networkLogs')) {
+        await Hive.openBox<NetworkLog>('networkLogs');
       }
-      if (tr.transferRateMbps != null) {
-        final v = tr.transferRateMbps;
-        if (v is num) return v.toDouble();
-      }
-      // fallback: try commonly named fields
-      if (tr.value != null) {
-        final v = tr.value;
-        if (v is num) return v.toDouble();
-      }
-    } catch (_) {}
-    return 0.0;
+    } catch (e) {
+      debugPrint("Hive open failed: $e");
+    }
   }
 
   Future<void> _updateSignalStrength() async {
@@ -98,145 +95,54 @@ class _LoggerState extends State<LoggerScreen> {
       final int? dbm = await FlutterInternetSignal().getMobileSignalStrength();
       if (dbm != null && mounted) setState(() => _signalDbm = dbm.toDouble());
     } catch (e) {
-      debugPrint("Error getting mobile signal: $e");
+      debugPrint("Error getting signal: $e");
     }
   }
-  // ---------------- Speed test wrapper (uses callbacks) ----------------
-  Future<Map<String, double>> _runSpeedTest({int timeoutSec = 12}) async {
-    final completer = Completer<Map<String, double>>();
-    double? dlRate;
-    double? ulRate;
-    Timer? timeoutTimer;
-
-    void tryCompleteIfReady() {
-      if ((dlRate != null && ulRate != null) && !completer.isCompleted) {
-        // both values present — complete with them
-        completer.complete({'download': dlRate!, 'upload': ulRate!});
-      }
-    }
-
-    // Timeout safeguard: complete with whatever we have if time runs out
-    timeoutTimer = Timer(Duration(seconds: timeoutSec), () {
-      if (!completer.isCompleted) {
-        completer.complete({
-          'download': dlRate ?? 0.0,
-          'upload': ulRate ?? 0.0,
-        });
-      }
-    });
-
-    try {
-      _speedTester.startTesting(
-        useFastApi: true,
-        onStarted: () {
-          // optional UI hook
-        },
-        onProgress: (dynamic percent, dynamic data) {
-          // optional: update progress
-        },
-        // When the package gives both results at once:
-        onCompleted: (downloadResult, uploadResult) {
-          try {
-            dlRate = downloadResult.valueAsMbps;  // 👈 clean Mbps
-            ulRate = uploadResult.valueAsMbps;    // 👈 clean Mbps
-          } catch (_) {
-            dlRate = 0.0;
-            ulRate = 0.0;
-          }
-
-          if (!completer.isCompleted) {
-            completer.complete({
-              'download': dlRate ?? 0.0,
-              'upload': ulRate ?? 0.0,
-            });
-          }
-        },
-
-        // When package provides separate callbacks:
-        onDownloadComplete: (dynamic data) {
-          try {
-            dlRate = _extractRate(data);
-          } catch (_) {}
-          tryCompleteIfReady();
-        },
-        onUploadComplete: (dynamic data) {
-          try {
-            ulRate = _extractRate(data);
-          } catch (_) {}
-          tryCompleteIfReady();
-        },
-        onError: (String errMsg, String speedTestErr) {
-          if (!completer.isCompleted) {
-            completer.complete({'download': dlRate ?? 0.0, 'upload': ulRate ?? 0.0});
-          }
-        },
-        onDefaultServerSelectionInProgress: () {},
-        onDefaultServerSelectionDone: (dynamic client) {},
-        onCancel: () {
-          if (!completer.isCompleted) {
-            completer.complete({'download': dlRate ?? 0.0, 'upload': ulRate ?? 0.0});
-          }
-        },
-      );
-    } catch (e) {
-      if (!completer.isCompleted) {
-        completer.complete({'download': dlRate ?? 0.0, 'upload': ulRate ?? 0.0});
-      }
-    }
-
-    // Ensure timeoutTimer is cancelled when the future completes
-    return completer.future.whenComplete(() => timeoutTimer?.cancel());
-  }
-
-// Hybrid _extractRate: tries many common fields and parses strings too
-
-
 
   Future<void> _updateNetType() async {
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
       String nt;
-      if (connectivityResult == ConnectivityResult.wifi) {
-        nt = "Wi-Fi";
-      } else if (connectivityResult == ConnectivityResult.mobile) {
-        nt = "Mobile";
-      } else {
-        nt = "None";
-      }
+      if (connectivityResult == ConnectivityResult.wifi) nt = "Wi-Fi";
+      else if (connectivityResult == ConnectivityResult.mobile) nt = "Mobile";
+      else nt = "None";
       if (mounted) setState(() => _netType = nt);
     } catch (e) {
       debugPrint("Error getting network type: $e");
     }
   }
 
-  // ---------------- Refresh Live Readings ----------------
+  // ---------------- Freeze last stream value ----------------
+  void _freezeLastStreamValue() {
+    setState(() {
+      _lastDlTested = (_lastStreamValue["download"] ?? 0.0) / 125.0; // KB/s -> Mbps
+      _lastUlTested = (_lastStreamValue["upload"] ?? 0.0) / 125.0;
+      _downloadMbps = _lastDlTested;
+      _uploadMbps = _lastUlTested;
+    });
+  }
+
+  // ---------------- Grab Live Readings ----------------
   Future<void> _grabLiveReadings() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
       final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best);
-      // update signal & net type
       await _updateSignalStrength();
       await _updateNetType();
-
-      // run a speed test and apply results
-      final speeds = await _runSpeedTest(timeoutSec: 10);
 
       if (!mounted) return;
       setState(() {
         _lat = pos.latitude;
         _lng = pos.longitude;
-        _downloadMbps = speeds['download'];
-        _uploadMbps = speeds['upload'];
-        _lastTestedSpeed = _downloadMbps;
       });
+
+      _freezeLastStreamValue();
     } catch (e) {
       debugPrint("Error grabbing live readings: $e");
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to get readings: $e")),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to get readings: $e")));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -245,12 +151,9 @@ class _LoggerState extends State<LoggerScreen> {
 
   // ---------------- Logging ----------------
   Future<void> _logNow({bool continuous = false}) async {
-    // If no GPS, nothing to log (manual flow would show snackbar)
     if (_lat == null || _lng == null) {
       if (!continuous && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("No GPS fix yet. Refresh readings first.")),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No GPS fix yet. Refresh readings first.")));
       }
       return;
     }
@@ -260,7 +163,6 @@ class _LoggerState extends State<LoggerScreen> {
     try {
       final match = await _matcher.findNearest(_lat!, _lng!);
 
-      // Save to SQLite/local DB
       await _db.insertLog(
         ts: DateTime.now(),
         lat: _lat!,
@@ -271,7 +173,7 @@ class _LoggerState extends State<LoggerScreen> {
         regionId: match?.regionId,
       );
 
-      // Save to Hive (ensure box opened in main())
+      await _ensureHiveBoxOpen();
       try {
         final hiveBox = Hive.box<NetworkLog>('networkLogs');
         await hiveBox.add(NetworkLog(
@@ -279,14 +181,13 @@ class _LoggerState extends State<LoggerScreen> {
           latitude: _lat!,
           longitude: _lng!,
           signalStrength: (_signalDbm ?? 0).toInt(),
-          downloadSpeed: (_downloadMbps ?? 0.0) * 1000, // kbps
-          uploadSpeed: (_uploadMbps ?? 0.0) * 1000,     // kbps
+          downloadSpeed: (_downloadMbps ?? 0.0) * 1000,
+          uploadSpeed: (_uploadMbps ?? 0.0) * 1000,
         ));
       } catch (e) {
         debugPrint("Hive add failed: $e");
       }
 
-      // Get cell info (graceful)
       Map<String, dynamic>? cellInfo;
       try {
         cellInfo = await CellInfoService.getCellInfo();
@@ -311,7 +212,6 @@ class _LoggerState extends State<LoggerScreen> {
         "region_name": match?.name,
       };
 
-      // Remote sync
       try {
         final response = await http.post(
           Uri.parse(backendUrl),
@@ -323,7 +223,8 @@ class _LoggerState extends State<LoggerScreen> {
           if (response.statusCode == 200) {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Log saved & synced.")));
           } else {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Sync failed: ${response.body}")));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text("Saved locally. Sync failed: ${response.body}")));
           }
         }
       } catch (e) {
@@ -334,7 +235,7 @@ class _LoggerState extends State<LoggerScreen> {
     } catch (e) {
       debugPrint("Logging failed: $e");
       if (!continuous && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Sync failed: $e")));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Logging failed: $e")));
       }
     } finally {
       if (!continuous && mounted) setState(() => _isLoading = false);
@@ -343,39 +244,51 @@ class _LoggerState extends State<LoggerScreen> {
 
   // ---------------- Continuous Logging ----------------
   Future<void> _startContinuousLogging() async {
-    // take one immediate reading, so logs would have values at once
-    try {
-      await _grabLiveReadings();
-    } catch (e) {
-      debugPrint("Initial grab before auto-log failed: $e");
-    }
+    if (_isAutoLogging) return;
+    _isAutoLogging = true;
+    setState(() {});
 
     _logTimer?.cancel();
-
-    // periodic safe wrapper so exceptions won't stop the timer
     _logTimer = Timer.periodic(Duration(seconds: _logIntervalSec), (t) async {
+      if (_isLogging) return;
+      _isLogging = true;
       try {
-        // refresh readings then log
         await _grabLiveReadings();
         await _logNow(continuous: true);
       } catch (e) {
         debugPrint("Auto-log tick error: $e");
-        // keep going
+      } finally {
+        _isLogging = false;
       }
     });
 
-    if (mounted) setState(() {});
+    _isLogging = true;
+    try {
+      await _grabLiveReadings();
+      await _logNow(continuous: true);
+    } catch (e) {
+      debugPrint("Initial auto-log error: $e");
+    } finally {
+      _isLogging = false;
+    }
+
+    setState(() {});
   }
 
   void _stopContinuousLogging() {
     _logTimer?.cancel();
     _logTimer = null;
-    if (mounted) setState(() {});
+    _isAutoLogging = false;
+    setState(() {});
   }
 
   // ---------------- Save as Region ----------------
   Future<void> _saveAsRegionDialog() async {
-    if (_lat == null || _lng == null) return;
+    if (_lat == null || _lng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No GPS fix yet. Refresh readings first.")));
+      return;
+    }
+
     final nameCtrl = TextEditingController();
     final radiusCtrl = TextEditingController(text: '40');
 
@@ -397,6 +310,7 @@ class _LoggerState extends State<LoggerScreen> {
         ],
       ),
     );
+
     if (res == true) {
       await _db.insertRegion(nameCtrl.text, _lat!, _lng!, radiusM: int.tryParse(radiusCtrl.text) ?? 40);
       if (!mounted) return;
@@ -413,31 +327,41 @@ class _LoggerState extends State<LoggerScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Live NetSpeed from EventChannel
             StreamBuilder<Map<String, double>>(
               stream: NetSpeed.speedStream,
               builder: (context, snap) {
                 if (!snap.hasData) return const Text("Waiting for live speed...");
-                final dl = snap.data!["download"] ?? 0.0;
-                final ul = snap.data!["upload"] ?? 0.0;
+
+                final dlKb = snap.data!["download"] ?? 0.0;
+                final ulKb = snap.data!["upload"] ?? 0.0;
+
+                _lastStreamValue = snap.data!;
+                _liveDownloadKb = dlKb;
+                _liveUploadKb = ulKb;
+
                 return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text("Live (instant): ↓ ${dlKb.toStringAsFixed(2)} KB/s   ↑ ${ulKb.toStringAsFixed(2)} KB/s",
+                        style: const TextStyle(fontSize: 16, color: Colors.green)),
+                    const SizedBox(height: 6),
                     Text(
-                      "↓ ${dl.toStringAsFixed(2)} KB/s   ↑ ${ul.toStringAsFixed(2)} KB/s",
-                      style: const TextStyle(fontSize: 16, color: Colors.green),
+                      "Tested: DL ${(_downloadMbps ?? 0.0).toStringAsFixed(2)} Mbps  |  UL ${(_uploadMbps ?? 0.0).toStringAsFixed(2)} Mbps",
+                      style: const TextStyle(fontSize: 15, color: Colors.blue),
                     ),
-                    if (_lastTestedSpeed != null)
-                      Text(
-                        "Last Tested: ${_lastTestedSpeed!.toStringAsFixed(2)} Mbps",
-                        style: const TextStyle(fontSize: 16, color: Colors.blue),
+                    if (_lastDlTested != null && _lastUlTested != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6.0),
+                        child: Text(
+                          "Last tested: DL ${_lastDlTested!.toStringAsFixed(2)} Mbps  |  UL ${_lastUlTested!.toStringAsFixed(2)} Mbps",
+                          style: const TextStyle(fontSize: 13, color: Colors.black54),
+                        ),
                       ),
                   ],
                 );
               },
             ),
             const SizedBox(height: 16),
-
-            // GPS + dBm + manual test
             Row(
               children: [
                 Expanded(child: Text("GPS: ${_lat?.toStringAsFixed(5) ?? '--'}, ${_lng?.toStringAsFixed(5) ?? '--'}")),
@@ -445,23 +369,29 @@ class _LoggerState extends State<LoggerScreen> {
               ],
             ),
             const SizedBox(height: 12),
-
-            // Buttons
             ElevatedButton.icon(
               onPressed: _isLoading ? null : _grabLiveReadings,
               icon: const Icon(Icons.refresh),
               label: Text(_isLoading ? "Please wait..." : "Refresh readings"),
             ),
             const SizedBox(height: 8),
-            // Auto Log start/stop
             ElevatedButton.icon(
-              onPressed: _logTimer == null ? _startContinuousLogging : _stopContinuousLogging,
-              icon: Icon(_logTimer == null ? Icons.play_arrow : Icons.stop),
-              label: Text(_logTimer == null ? "Start Auto Log" : "Stop Auto Log"),
+              onPressed: _isLoading ? null : () {
+                _freezeLastStreamValue();
+                _logNow(continuous: false);
+              },
+              icon: const Icon(Icons.save),
+              label: const Text("Save Current Reading"),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              onPressed: _isAutoLogging ? _stopContinuousLogging : _startContinuousLogging,
+              icon: Icon(_isAutoLogging ? Icons.stop : Icons.play_arrow),
+              label: Text(_isAutoLogging ? "Stop Auto Log" : "Start Auto Log"),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: _isLoading ? null : _saveAsRegionDialog,
+              onPressed: _saveAsRegionDialog,
               child: const Text("Save as Region"),
             ),
           ],
