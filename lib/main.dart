@@ -43,7 +43,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Network Tracker',
+      title: 'Internet speed logging, coverage mapping and Availability Predicter',
 
       // 🔹 App theme (using Material 3)
       theme: ThemeData(
