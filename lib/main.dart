@@ -30,6 +30,7 @@ void main() async {
   await Hive.initFlutter();
   Hive.registerAdapter(NetworkLogAdapter());
   await Hive.openBox<NetworkLog>('networkLogs');
+  await Hive.openBox('regionsCache');
 
   // Launch the app with Provider
   runApp(

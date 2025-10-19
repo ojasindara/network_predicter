@@ -21,6 +21,13 @@
     "avg_upload": 0.75
   },
   {
+    "name": "North gate",
+    "latitude": 7.2953,
+    "longitude": 5.1346,
+    "avg_download": 2.10,
+    "avg_upload": 1.68
+  },
+  {
     "name": "My Room",
     "latitude": 7.2953,
     "longitude": 5.1349,
@@ -35,7 +42,7 @@
     "avg_upload": 0.08
   },
   {
-    "name": "Toheeb’s Room",
+    "name": "New Abiola Room",
     "latitude": 7.2953,
     "longitude": 5.1350,
     "avg_download": 0.05,
