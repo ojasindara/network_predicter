@@ -150,7 +150,7 @@ class _MapScreenState extends State<MapScreen> {
       body: FlutterMap(
         options: MapOptions(
           initialCenter: location,
-          initialZoom: 14,
+          initialZoom: 16,
         ),
         children: [
           TileLayer(

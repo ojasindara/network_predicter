@@ -4,10 +4,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_internet_signal/flutter_internet_signal.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../data/db.dart';
 import '../data/region_matcher.dart';
@@ -213,36 +215,24 @@ class _LoggerState extends State<LoggerScreen> {
       };
 
       try {
-        final response = await http.post(
-          Uri.parse(backendUrl),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode(payload),
-        );
+        // Upload directly to Firebase Firestore
+        await FirebaseFirestore.instance.collection('networkLogs').add(payload);
 
         if (!continuous && mounted) {
-          if (response.statusCode == 200) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Log saved & synced.")));
-          } else {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text("Saved locally. Sync failed: ${response.body}")));
-          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("✅ Log saved & synced to Firebase.")),
+          );
         }
       } catch (e) {
         if (!continuous && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Sync failed: $e")));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Saved locally. Firebase sync failed: $e")),
+          );
         }
       }
-    } catch (e) {
-      debugPrint("Logging failed: $e");
-      if (!continuous && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saved locally. Logging failed: $e")));
-      }
-    } finally {
-      if (!continuous && mounted) setState(() => _isLoading = false);
-    }
-  }
 
-  // ---------------- Continuous Logging ----------------
+
+      // ---------------- Continuous Logging ----------------
   Future<void> _startContinuousLogging() async {
     if (_isAutoLogging) return;
     _isAutoLogging = true;

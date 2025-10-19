@@ -5,10 +5,13 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 // Your model
 import 'models/network_log.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
 // Your app screens (kept in /screens folder)
 import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/loginpage.dart';
 import 'screens/logger_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/map_screen.dart';
@@ -18,7 +21,10 @@ import 'providers/logger_provider.dart'; // adjust path if needed
 import 'screens/compare_screen.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized(); // Ensure bindings before Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   // Hive initialization
   await Hive.initFlutter();
@@ -61,6 +67,7 @@ class MyApp extends StatelessWidget {
         '/logger': (context) => const LoggerScreen(), // Network Logger
         '/history': (context) => const HistoryScreen(), // History Page
         '/map': (context) => const MapScreen(), // Map Page
+        '/login': (context) => const LoginPage(),
       },
     );
   }

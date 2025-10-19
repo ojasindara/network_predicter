@@ -252,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     provider.currentPosition?.latitude ?? defaultLat,
                     provider.currentPosition?.longitude ?? defaultLng,
                   ),
-                  initialZoom: 17,
+                  initialZoom: 15,
                 ),
                 children: [
                   TileLayer(
