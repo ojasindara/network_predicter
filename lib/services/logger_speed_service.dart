@@ -1,64 +1,61 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:math';
-import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 
 // ---------------- Download Speed Service ----------------
 Future<double> logger_download_service() async {
-  final url = Uri.parse('https://fsn1-speed.hetzner.com/10MB.bin');
-  final stopwatch = Stopwatch()..start();
+  final completer = Completer<double>();
 
-  try {
-    final request = await HttpClient().getUrl(url);
-    final response = await request.close();
+  final channel = MethodChannel('com.networkpredictor/speedtest');
 
-    if (response.statusCode != 200) {
-      throw Exception("Download failed: ${response.statusCode}");
+  // Listener for platform channel responses
+  Future<dynamic> listener(MethodCall call) async {
+    if (call.method == 'onSpeedTestComplete') {
+      final speedBps = call.arguments as int;
+      final speedMbps = speedBps / 1e6; // Convert to Mbps
+      completer.complete(double.parse(speedMbps.toStringAsFixed(2)));
+    } else if (call.method == 'onSpeedTestError') {
+      completer.complete(0.0);
     }
 
-    int bytesReceived = 0;
-    await for (var data in response) {
-      bytesReceived += data.length;
-    }
-
-    stopwatch.stop();
-    final seconds = stopwatch.elapsedMilliseconds / 1000;
-    final bits = bytesReceived * 8;
-    final mbps = (bits / seconds) / (1024 * 1024);
-    return double.parse(mbps.toStringAsFixed(2));
-  } catch (e) {
-    print("Error in download test: $e");
-    return 0.0;
+    // Return null if nothing needs to be returned
+    return null;
   }
+
+  channel.setMethodCallHandler(listener);
+
+  // Start download test
+  await channel.invokeMethod('startDownloadTest', {
+    'url': 'http://ipv4.ikoula.testdebit.info/1M.iso',
+  });
+
+  return completer.future;
 }
 
 // ---------------- Upload Speed Service ----------------
 Future<double> logger_upload_service() async {
-  final url = Uri.parse('http://speedtest.tele2.net/upload.php');
-  final stopwatch = Stopwatch()..start();
+  final completer = Completer<double>();
 
-  try {
-    // generate random 5 MB data
-    final random = Random();
-    final data = List<int>.generate(5 * 1024 * 1024, (_) => random.nextInt(256));
+  final channel = MethodChannel('com.networkpredictor/speedtest');
 
-    final request = http.MultipartRequest('POST', url)
-      ..files.add(http.MultipartFile.fromBytes('file', data, filename: 'upload_test.bin'));
-
-    final response = await request.send();
-
-    stopwatch.stop();
-    final seconds = stopwatch.elapsedMilliseconds / 1000;
-
-    if (response.statusCode != 200) {
-      throw Exception("Upload failed: ${response.statusCode}");
+  // Listener for platform channel responses
+  Future<dynamic> listener(MethodCall call) async {
+    if (call.method == 'onSpeedTestComplete') {
+      final speedBps = call.arguments as int;
+      final speedMbps = speedBps / 1e6; // Convert to Mbps
+      completer.complete(double.parse(speedMbps.toStringAsFixed(2)));
+    } else if (call.method == 'onSpeedTestError') {
+      completer.complete(0.0);
     }
 
-    final bits = data.length * 8;
-    final mbps = (bits / seconds) / (1024 * 1024);
-    return double.parse(mbps.toStringAsFixed(2));
-  } catch (e) {
-    print("Error in upload test: $e");
-    return 0.0;
   }
+
+  channel.setMethodCallHandler(listener);
+
+  // Start upload test
+  await channel.invokeMethod('startUploadTest', {
+    'url': 'https://network-predicter.wuaze.com/upload.php',
+    'fileSize': 5 * 1024 * 1024, // 5 MB
+  });
+
+  return completer.future;
 }

@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import '../providers/logger_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Unified model used for both JSON averages and local logs
 class PredictedLocation {
@@ -129,7 +130,20 @@ Future<List<PredictedLocation>> getTopPredictedLocations(LoggerProvider provider
 
   return combined.take(top).toList();
 }
+Future<void> _initPermissions() async {
+  // Request foreground location permission
+  PermissionStatus status = await Permission.location.request();
 
+  if (status.isGranted) {
+    print("Location permission granted");
+  } else if (status.isDenied) {
+    print("Location permission denied");
+    // Optionally, show a dialog explaining why it's needed
+  } else if (status.isPermanentlyDenied) {
+    print("Permission permanently denied, open app settings");
+    openAppSettings(); // Opens device settings for the user
+  }
+}
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -147,6 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _initPermissions();
     _determinePosition();
     // Initialize provider logs
     context.read<LoggerProvider>().init();

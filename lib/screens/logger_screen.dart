@@ -74,9 +74,21 @@ class _LoggerState extends State<LoggerScreen> {
   @override
   void initState() {
     super.initState();
+
+    // Request necessary permissions
     _requestPermissions();
+
+    _initHive();
+
+    // Start your network speed instance
     NetSpeed.start();
+
+    // Start automatic live readings every second
+    _logTimer = Timer.periodic(Duration(seconds: 15), (timer) {
+      _grabLiveReadings();
+    });
   }
+
 
   @override
   void dispose() {
@@ -97,6 +109,15 @@ class _LoggerState extends State<LoggerScreen> {
       await Permission.phone.request();
     }
   }
+
+
+
+  Future<void> _initHive() async {
+    await Hive.openBox('regionsCache');
+    await Hive.openBox<NetworkLog>('networkLogs');
+  }
+
+
 
   Future<void> _ensureHiveBoxOpen() async {
     try {
@@ -423,19 +444,16 @@ class _LoggerState extends State<LoggerScreen> {
             ),
             const SizedBox(height: 12),
             ElevatedButton.icon(
-              onPressed: _isLoading ? null : _grabLiveReadings,
-              icon: const Icon(Icons.refresh),
-              label: Text(_isLoading ? "Please wait..." : "Refresh readings"),
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: _isLoading ? null : () {
+              onPressed: _isLoading
+                  ? null
+                  : () {
                 _freezeLastStreamValue();
                 _logNow(continuous: false);
               },
               icon: const Icon(Icons.save),
               label: const Text("Save Current Reading"),
             ),
+
             const SizedBox(height: 8),
             ElevatedButton.icon(
               onPressed: _isAutoLogging ? _stopContinuousLogging : _startContinuousLogging,
@@ -444,7 +462,9 @@ class _LoggerState extends State<LoggerScreen> {
             ),
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: () => _saveAsRegionDialog(_lat!, _lng!, "Region A"),
+              onPressed: (_lat != null && _lng != null)
+                  ? () => _saveAsRegionDialog(_lat!, _lng!, "Region A")
+                  : null,
               child: const Text("Save as Region"),
             ),
             const SizedBox(height: 12),

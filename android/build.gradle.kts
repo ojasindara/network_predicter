@@ -31,7 +31,7 @@ subprojects {
 }
 
 subprojects {
-    project.evaluationDependsOn(":app")
+    this.evaluationDependsOn(":app")
 }
 
 tasks.withType<JavaCompile>().configureEach {

@@ -1,0 +1,77 @@
+[33mcommit fcba38ba89dd3bf5d6d4f426c4a563f3bac58e1b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Sun Oct 19 20:43:27 2025 +0100
+
+    Newer algorithm for testing speed. regions now functioning
+
+[33mcommit 98d4120f1dd21aca650e3576caccfd04ae4b776c[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Sun Oct 19 07:17:58 2025 +0100
+
+    Back end is now purely firebase with authentication
+
+[33mcommit c200c52fc893aacb35086079b91ae3109804ec59[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Wed Oct 15 10:33:24 2025 +0100
+
+    speed test doesnt generate random values and backend workd 24 7
+
+[33mcommit 3f08f0641b4bbd4e92fb2e286590434f9ae9208c[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Thu Oct 2 09:53:45 2025 +0100
+
+    most things work now final before defence
+
+[33mcommit 35df7d3a5b68c18a3e08efb88b008b9286c21364[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Wed Oct 1 20:03:42 2025 +0100
+
+    most things work now 4
+
+[33mcommit ba1207cb09b059f7de7b54ef16b4d6044a05d6e1[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Sun Sep 28 11:28:50 2025 +0100
+
+    most things work now 3
+
+[33mcommit afde1efd835199b9802a5fb9aebce11301c694dc[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Thu Sep 18 14:16:07 2025 +0100
+
+    now the maps works and the netspeed is faster 2
+
+[33mcommit 1a02826fb85cdb0721c320ed9d940451a36f9b15[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Thu Sep 18 07:34:46 2025 +0100
+
+    now the maps works and the netspeed is faster
+
+[33mcommit 603192f423048865f1edf676f05f7129ffbf7853[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Wed Sep 3 07:38:46 2025 +0100
+
+    newer edits
+
+[33mcommit 2d0375c46853173fe51ecd313ccd8ccf9d91ae78[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Wed Aug 27 13:35:52 2025 +0100
+
+    This works. it asks for permissions
+
+[33mcommit 5d1426339d3c01a280de46e5dd71601b45659024[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Wed Aug 27 13:16:02 2025 +0100
+
+    Describe what you edited
+
+[33mcommit 137569c3fd36b55ab9b5b620fc6895018c337924[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Wed Aug 27 08:19:04 2025 +0100
+
+    Initial commit
+
+[33mcommit 52e3ba93540c60fb7e59d8eea8bcd394210b9455[m
+Author: Ojambati Victor <ojasindara@gmail.com>
+Date:   Thu Aug 21 14:18:57 2025 +0100
+
+    Initial commit
