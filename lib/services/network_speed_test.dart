@@ -1,4 +1,4 @@
-import 'package:flutter_internet_speed_test/flutter_internet_speed_test.dart';
+import 'package:flutter_internet_speed_test_pro/flutter_internet_speed_test_pro.dart';
 
 class NetworkSpeedTest {
   final FlutterInternetSpeedTest _speedTest = FlutterInternetSpeedTest();

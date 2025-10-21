@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter_internet_speed_test/flutter_internet_speed_test.dart';
+import 'package:flutter_internet_speed_test_pro/flutter_internet_speed_test_pro.dart';
 
 /// A real NetSpeed stream using flutter_internet_speed_test plugin.
 class NetSpeed {

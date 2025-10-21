@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_internet_signal/flutter_internet_signal.dart';
+import 'package:flutter_internet_speed_test_pro/flutter_internet_speed_test_pro.dart';
 import 'package:hive/hive.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -16,6 +17,7 @@ import '../models/network_log.dart';
 import '../services/netspeed.dart';
 import '../services/logger_speed_service.dart';
 import '../services/logger_download_service.dart';
+import '../services/global_speed_monitor.dart';
 import '../services/logger_upload_service.dart';
 import '../services/cell_info_service.dart';
 
@@ -54,13 +56,16 @@ class _LoggerState extends State<LoggerScreen> {
   // Tested speeds (Mbps)
   double? _downloadMbps;
   double? _uploadMbps;
+  final FlutterInternetSpeedTest _speedTest = FlutterInternetSpeedTest();
+
 
   // Live stream values (KB/s)
   double _liveDownloadKb = 0.0;
   double _liveUploadKb = 0.0;
   double? _downloadSpeed;
   double? _uploadSpeed;
-
+  String? _unit;
+  bool _isTestingSpeed = false;
 
   // Freeze last stream value
   Map<String, double> _lastStreamValue = {"download": 0.0, "upload": 0.0};
@@ -139,6 +144,39 @@ class _LoggerState extends State<LoggerScreen> {
   }
 
   Future<void> _updateNetType() async {
+    Future<void> _runInternetSpeedTest() async {
+      if (_isTestingSpeed) return;
+      _isTestingSpeed = true;
+
+      try {
+        await _speedTest.startTesting(
+          onCompleted: (TestResult download, TestResult upload) {
+            setState(() {
+              _downloadMbps = download.transferRate;
+              _uploadMbps = upload.transferRate;
+              _unit = download.unit.toString().split('.').last;
+            });
+
+            debugPrint("✅ Speed test done: ${_downloadMbps?.toStringAsFixed(2)} ${_unit}, "
+                "Upload: ${_uploadMbps?.toStringAsFixed(2)} ${_unit}");
+          },
+          onProgress: (double percent, TestResult data) {
+            // Optional: you can show progress on UI
+            debugPrint("Testing... ${percent.toStringAsFixed(0)}% "
+                "${data.type == TestType.download ? "DL" : "UL"} "
+                "${data.transferRate.toStringAsFixed(2)} ${data.unit}");
+          },
+          onError: (String errorMessage, String speedTestError) {
+            debugPrint("Speed test error: $errorMessage - $speedTestError");
+          },
+        );
+      } catch (e) {
+        debugPrint("Error running speed test: $e");
+      } finally {
+        _isTestingSpeed = false;
+      }
+    }
+
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
       String nt;
@@ -172,21 +210,27 @@ class _LoggerState extends State<LoggerScreen> {
         desiredAccuracy: LocationAccuracy.best,
       );
 
-      // Step 2: Update signal strength and network type
-      await _updateSignalStrength();
-      await _updateNetType();
+      // Step 3: Start global speed test
+      GlobalSpeedMonitor monitor = GlobalSpeedMonitor();
+      monitor.start();
 
-      // Step 3: Run download and upload speed tests
-      final downloadSpeed = await logger_download_service();
-      final uploadSpeed = await logger_upload_service();
+// Listen for updates from the global speed monitor
+      monitor.speedDataNotifier.addListener(() {
+        final data = monitor.speedDataNotifier.value;
+        if (mounted && data.isNotEmpty) {
+          setState(() {
+            _downloadSpeed = data['download'];
+            _uploadSpeed = data['upload'];
+            _unit = data['unit'];
+          });
+        }
+      });
 
-      // Step 4: Update state with all readings
+// Step 4: Update location state
       if (!mounted) return;
       setState(() {
         _lat = pos.latitude;
         _lng = pos.longitude;
-        _downloadSpeed = downloadSpeed; // in Mbps
-        _uploadSpeed = uploadSpeed;     // in Mbps
       });
 
       // Step 5: Save or freeze data
