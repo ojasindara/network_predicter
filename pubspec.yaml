@@ -46,12 +46,13 @@ dependencies:
   #telephony: ^0.2.0
   hive_flutter: ^1.1.0
   flutter_internet_signal: ^0.0.43
-  flutter_internet_speed_test_pro: ^1.5.1
+  flutter_internet_speed_test_pro: ^1.0.1
   meta: ^1.16.0
   #mapbox_gl: ^0.16.0
   #mapbox_gl_web: ^0.16.0
   path_provider: ^2.1.5
   fl_chart: ^0.68.0
+  workmanager: ^0.9.0+3
   firebase_core: ^3.15.2
   flutter_map: ^8.2.2
   url_launcher: ^6.3.2
