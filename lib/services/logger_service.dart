@@ -3,16 +3,22 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_internet_signal/flutter_internet_signal.dart';
 import 'package:hive/hive.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/network_log.dart';
 
 /// A robust logger for continuous monitoring of traffic, location, and signal strength.
 class LoggerService {
   static const EventChannel _trafficChannel = EventChannel('netspeed_channel');
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static final SupabaseClient supabase = Supabase.instance.client;
   static StreamSubscription? _trafficSub;
   static DateTime? _lastLocationFetch;
   static Position? _cachedPosition;
+  static Future<void> _storeLastSpeeds(double download, double upload) async {
+    final box = await Hive.openBox('lastSpeeds');
+    await box.put('download', download);
+    await box.put('upload', upload);
+  }
+
 
   /// Starts listening to system traffic stream and logs data
   static void startLogging(void Function(NetworkLog log) onUpdate) {
@@ -22,6 +28,10 @@ class LoggerService {
           final data = Map<String, dynamic>.from(event);
           final download = (data['download_kb_s'] ?? 0).toDouble();
           final upload = (data['upload_kb_s'] ?? 0).toDouble();
+          // After computing download and upload
+          await _storeLastSpeeds(download, upload);
+
+
 
           final now = DateTime.now();
 
@@ -95,7 +105,9 @@ class LoggerService {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied ||
-            permission == LocationPermission.deniedForever) return null;
+            permission == LocationPermission.deniedForever) {
+          return null;
+        }
       }
 
       return await Geolocator.getCurrentPosition(
@@ -132,7 +144,7 @@ class LoggerService {
     await box.add(log);
 
     try {
-      await _firestore.collection('speed_logs').add({
+      await supabase.from('speed_logs').insert({
         'download': log.downloadSpeed,
         'upload': log.uploadSpeed,
         'latitude': log.latitude,

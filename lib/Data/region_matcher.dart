@@ -19,7 +19,7 @@ class RegionMatcher {
       final d = haversineMeters(lat, lng, r['latitude'] as double, r['longitude'] as double);
       final radius = (r['radius_m'] as int);
       if (d <= radius) {
-        if (best == null || d < best!.distanceM) {
+        if (best == null || d < best.distanceM) {
           best = RegionMatch(r['id'] as int, r['name'] as String, d);
         }
       }

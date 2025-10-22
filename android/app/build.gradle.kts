@@ -1,8 +1,9 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    id("com.google.gms.google-services")
-    id("dev.flutter.flutter-gradle-plugin")
+    id("dev.flutter.flutter-gradle-plugin") // Flutter plugin
+    // Remove Google Services if you fully migrate to Supabase
+    // id("com.google.gms.google-services")
 }
 
 android {
@@ -12,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.network_predicter"
-        minSdk = 23
+        minSdk = 23 // Supports runtime permissions
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
@@ -31,7 +32,7 @@ android {
         getByName("release") {
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
-            isShrinkResources = false // <- add this
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -41,9 +42,18 @@ android {
 }
 
 dependencies {
-    implementation("fr.bmartel:jspeedtest:1.32.1")
+    // Core Kotlin & Android
     implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
+
+    // Location services
+    implementation("com.google.android.gms:play-services-location:21.0.1")
+
+    // Optional: lifecycle aware components (helpful if you need to observe foreground service)
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+
+    // Optional: Kotlin coroutines if you want async work
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 
 flutter {

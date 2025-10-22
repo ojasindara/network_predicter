@@ -6,8 +6,7 @@ import 'package:workmanager/workmanager.dart';
 
 // Your model
 import 'models/network_log.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Your app screens (kept in /screens folder)
 import 'screens/splash_screen.dart';
@@ -20,7 +19,6 @@ import 'screens/map_screen.dart';
 import 'package:provider/provider.dart';
 import 'providers/logger_provider.dart'; // adjust path if needed
 
-import 'screens/compare_screen.dart';
 
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
@@ -35,8 +33,9 @@ void callbackDispatcher() {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized(); // Ensure bindings before Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+  await Supabase.initialize(
+    url: 'https://lofhphqjdfairgjqhjvp.supabase.co',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvZmhwaHFqZGZhaXJnanFoanZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA5OTU5NDEsImV4cCI6MjA3NjU3MTk0MX0.jvhRvUDFaDMB1ArZBxDsNPvrzlX_V6RvrejjycMeaE0',
   );
   //Workmanager initialize
   Workmanager().initialize(

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 👈 add this import
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -19,7 +19,7 @@ class _SplashScreenState extends State<SplashScreen> {
     await Future.delayed(const Duration(seconds: 3)); // splash delay
 
     // 👇 Check current user
-    User? user = FirebaseAuth.instance.currentUser;
+    User? user = Supabase.instance.client.auth.currentUser;
 
     if (mounted) {
       if (user != null) {

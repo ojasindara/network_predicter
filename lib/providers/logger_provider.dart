@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import '../data/db.dart' as db;
 import '../models/network_log.dart';
 import '../data/app_db.dart';
 

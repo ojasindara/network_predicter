@@ -1,13 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:hive/hive.dart';
 import '../models/network_log.dart';
 import '../services/logger_service.dart';
 
 class LoggerScreen extends StatefulWidget {
-  const LoggerScreen({Key? key}) : super(key: key);
+  const LoggerScreen({super.key});
 
   @override
   State<LoggerScreen> createState() => _LoggerScreenState();
