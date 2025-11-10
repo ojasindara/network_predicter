@@ -28,9 +28,13 @@ class _PredictionScreenState extends State<PredictionScreen> {
 
       // Find logs within 0.002 degrees (~200m)
       final nearbyLogs = logs.where((log) {
-        return (log.latitude - position.latitude).abs() < 0.002 &&
-            (log.longitude - position.longitude).abs() < 0.002;
+        final lat = log.latitude;
+        final lon = log.longitude;
+        if (lat == null || lon == null) return false; // skip logs with null
+        return (lat - position.latitude).abs() < 0.002 &&
+            (lon - position.longitude).abs() < 0.002;
       }).toList();
+      ;
 
       if (nearbyLogs.isEmpty) {
         setState(() {
@@ -40,9 +44,24 @@ class _PredictionScreenState extends State<PredictionScreen> {
         return;
       }
 
-      final avgStrength = nearbyLogs.map((log) => log.signalStrength).reduce((a, b) => a + b) / nearbyLogs.length;
+      // Compute average signal strength safely
+      final validStrengths = nearbyLogs
+          .map((log) => log.signalStrength ?? 0)
+          .where((s) => s > 0)
+          .toList();
 
-      String status = switch (avgStrength) {
+      if (validStrengths.isEmpty) {
+        setState(() {
+          prediction = "Nearby logs exist but no signal data available.";
+          loading = false;
+        });
+        return;
+      }
+
+      final avgStrength = validStrengths.reduce((a, b) => a + b) / validStrengths.length;
+      final avgRounded = avgStrength.round();
+
+      String status = switch (avgRounded) {
         >= 75 => "✅ Strong network expected",
         >= 50 => "⚠️ Fair network likely",
         _     => "❌ Weak network likely"

@@ -17,31 +17,37 @@ class NetworkLogAdapter extends TypeAdapter<NetworkLog> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return NetworkLog(
-      timestamp: fields[0] as DateTime,
-      latitude: fields[1] as double,
-      longitude: fields[2] as double,
-      signalStrength: fields[3] as int,
-      downloadSpeed: fields[4] as double,
-      uploadSpeed: fields[5] as double,
+      downloadKb: fields[0] as double,
+      uploadKb: fields[1] as double,
+      signalStrength: fields[2] as int?,
+      latitude: fields[3] as double?,
+      longitude: fields[4] as double?,
+      weather: fields[5] as String?,
+      temperature: fields[6] as double?,
+      timestamp: fields[7] as int,
     );
   }
 
   @override
   void write(BinaryWriter writer, NetworkLog obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(8)
       ..writeByte(0)
-      ..write(obj.timestamp)
+      ..write(obj.downloadKb)
       ..writeByte(1)
-      ..write(obj.latitude)
+      ..write(obj.uploadKb)
       ..writeByte(2)
-      ..write(obj.longitude)
-      ..writeByte(3)
       ..write(obj.signalStrength)
+      ..writeByte(3)
+      ..write(obj.latitude)
       ..writeByte(4)
-      ..write(obj.downloadSpeed)
+      ..write(obj.longitude)
       ..writeByte(5)
-      ..write(obj.uploadSpeed);
+      ..write(obj.weather)
+      ..writeByte(6)
+      ..write(obj.temperature)
+      ..writeByte(7)
+      ..write(obj.timestamp);
   }
 
   @override

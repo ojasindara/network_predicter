@@ -1,102 +1,132 @@
 import 'dart:async';
-import 'package:flutter/services.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:flutter_internet_signal/flutter_internet_signal.dart';
 import 'package:hive/hive.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/network_log.dart';
+import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 
-/// A robust logger for continuous monitoring of traffic, location, and signal strength.
+/// Handles Android service data streaming, Hive storage, and Supabase sync
 class LoggerService {
   static const EventChannel _trafficChannel = EventChannel('netspeed_channel');
   static final SupabaseClient supabase = Supabase.instance.client;
   static StreamSubscription? _trafficSub;
-  static DateTime? _lastLocationFetch;
-  static Position? _cachedPosition;
-  static Future<void> _storeLastSpeeds(double download, double upload) async {
-    final box = await Hive.openBox('lastSpeeds');
-    await box.put('download', download);
-    await box.put('upload', upload);
-  }
+  static bool _isSaving = false;
+
+  static final StreamController<NetworkLog> _logController =
+  StreamController<NetworkLog>.broadcast();
+
+  static Stream<NetworkLog> get logStream => _logController.stream;
+
+  /// Start the Kotlin background listener
+  static StreamSubscription<NetworkLog> startLogging(void Function(NetworkLog log) onUpdate) {
+
+  print("LoggerService: Starting to listen for Kotlin logs...");
+  final controller = StreamController<NetworkLog>();
 
 
-  /// Starts listening to system traffic stream and logs data
-  static void startLogging(void Function(NetworkLog log) onUpdate) {
-    _trafficSub = _trafficChannel.receiveBroadcastStream().listen(
+  _trafficSub = _trafficChannel.receiveBroadcastStream().listen(
           (event) async {
         try {
           final data = Map<String, dynamic>.from(event);
-          final download = (data['download_kb_s'] ?? 0).toDouble();
-          final upload = (data['upload_kb_s'] ?? 0).toDouble();
-          // After computing download and upload
-          await _storeLastSpeeds(download, upload);
 
+          // Defensive parsing
+          final timestampMs = (data['timestamp'] is int)
+              ? data['timestamp'] as int
+              : int.tryParse(data['timestamp'].toString()) ??
+              DateTime.now().millisecondsSinceEpoch;
 
+          // Convert KB → MB
+          final downloadMb = ((data['downloadKb'] ?? 0).toDouble()) / 1024.0;
+          final uploadMb = ((data['uploadKb'] ?? 0).toDouble()) / 1024.0;
 
-          final now = DateTime.now();
-
-          // Throttle GPS updates (every 10s)
-          if (_lastLocationFetch == null ||
-              now.difference(_lastLocationFetch!) > const Duration(seconds: 10)) {
-            final pos = await _safeGetPosition();
-            if (pos != null) {
-              _cachedPosition = pos;
-              await _cacheLastLocation(pos); // save to Hive
-            } else {
-              _cachedPosition ??= await _getCachedLocation();
-            }
-            _lastLocationFetch = now;
-          } else {
-            _cachedPosition ??= await _getCachedLocation();
-          }
-
-          final signal = await _safeGetSignalStrength();
+          final regionB = (data['region'] ?? 'home');
 
           final log = NetworkLog(
-            downloadSpeed: download,
-            uploadSpeed: upload,
-            signalStrength: signal.toInt(),
-            latitude: _cachedPosition?.latitude ?? 0.0,
-            longitude: _cachedPosition?.longitude ?? 0.0,
-            timestamp: now,
+            downloadKb: downloadMb,
+            uploadKb: uploadMb,
+            signalStrength: (data['signalStrength'] ?? 0).toInt(),
+            latitude: (data['latitude'] ?? 0.0).toDouble(),
+            longitude: (data['longitude'] ?? 0.0).toDouble(),
+            weather: data['weather'] ?? '',
+            temperature: (data['temperature'] ?? 0.0).toDouble(),
+            timestamp: timestampMs,
+            region: regionB
           );
 
-          onUpdate(log);
+          print("LoggerService: Log created -> $log");
+
+          _logController.add(log);
           await _persistLog(log);
-        } catch (e) {
-          print('LoggerService error: $e');
+          onUpdate(log); // <— VERY important, tells LoggerScreen about new data
+        } catch (e, st) {
+          print('LoggerService error: $e\n$st');
         }
       },
       onError: (error) => print('Traffic channel error: $error'),
     );
+  // Return a proper StreamSubscription<NetworkLog>
+  return controller.stream.listen((event) {});// <— Return actual subscription, not a dummy controller
   }
 
-  static void stopLogging() => _trafficSub?.cancel();
-
-  /// For WorkManager background logging
-  static Future<void> logNowBackground() async {
+  /// Initialize Hive
+  static Future<void> initialize() async {
     try {
-      final pos = await _safeGetPosition() ?? await _getCachedLocation();
-      final signal = await _safeGetSignalStrength();
-
-      final log = NetworkLog(
-        downloadSpeed: 0.0,
-        uploadSpeed: 0.0,
-        signalStrength: signal.toInt(),
-        latitude: pos?.latitude ?? 0.0,
-        longitude: pos?.longitude ?? 0.0,
-        timestamp: DateTime.now(),
-      );
-
-      await _persistLog(log);
-    } catch (e) {
-      print('Background log failed: $e');
+      if (!Hive.isBoxOpen('networkLogs')) {
+        await Hive.openBox<NetworkLog>('networkLogs');
+      }
+      print("LoggerService: Hive initialized successfully.");
+    } catch (e, st) {
+      print("LoggerService initialization error: $e\n$st");
     }
   }
 
-  // ----------------- Helpers -----------------
+  /// Stop Kotlin listener and stream
+  static void stopLogging() {
+    _trafficSub?.cancel();
+    print("LoggerService: Stopped logging.");
+  }
 
-  static Future<Position?> _safeGetPosition() async {
+  /// Persist logs locally and sync to Supabase
+  static Future<void> _persistLog(NetworkLog log) async {
+    final box = Hive.box<NetworkLog>('networkLog');
+    await box.add(log);
+    print("LoggerService: Log added to Hive -> $log");
+
+    if (_isSaving) return;
+    _isSaving = true;
+
+    try {
+      await Future.delayed(const Duration(seconds: 10));
+
+      final unsynced = box.values.take(4).toList();
+      for (final entry in unsynced) {
+        final lat = entry.latitude ?? 0.0;
+        final lon = entry.longitude ?? 0.0;
+
+        await supabase.from('speed_logs').insert({
+          'download': entry.downloadKb,
+          'upload': entry.uploadKb,
+          'latitude': lat,
+          'longitude': lon,
+          'signal_strength': entry.signalStrength ?? 0,
+          'weather': entry.weather,
+          'temperature': entry.temperature,
+          'timestamp': entry.timestamp,
+          'Region': entry.region,
+        });
+      }
+
+      print("LoggerService: Synced ${unsynced.length} logs to Supabase.");
+    } catch (e, st) {
+      print("LoggerService: Error syncing to Supabase: $e\n$st");
+    } finally {
+      _isSaving = false;
+    }
+  }
+
+  /// (Optional) Get device location — useful for future enhancements
+  static Future<LatLng?> getCurrentLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return null;
@@ -104,85 +134,18 @@ class LoggerService {
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied ||
-            permission == LocationPermission.deniedForever) {
-          return null;
-        }
+        if (permission == LocationPermission.denied) return null;
       }
+      if (permission == LocationPermission.deniedForever) return null;
 
-      return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best,
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
       );
-    } catch (_) {
+
+      return LatLng(position.latitude, position.longitude);
+    } catch (e) {
+      print("Geolocator error: $e");
       return null;
     }
-  }
-
-  static Future<double> _safeGetSignalStrength() async {
-    try {
-      final plugin = FlutterInternetSignal();
-      final mobileStrength = await plugin.getMobileSignalStrength();
-      if (mobileStrength != null) {
-        return mobileStrength.toDouble();
-      }
-      // fallback to WiFi if needed
-      final wifiInfo = await plugin.getWifiSignalInfo();
-      if (wifiInfo?.dbm != null) {
-        return wifiInfo!.dbm!.toDouble();
-      }
-      return 0.0;
-    } catch (e) {
-      print('Error getting signal strength: $e');
-      return 0.0;
-    }
-  }
-
-
-
-  static Future<void> _persistLog(NetworkLog log) async {
-    final box = Hive.box<NetworkLog>('networkLogs');
-    await box.add(log);
-
-    try {
-      await supabase.from('speed_logs').insert({
-        'download': log.downloadSpeed,
-        'upload': log.uploadSpeed,
-        'latitude': log.latitude,
-        'longitude': log.longitude,
-        'signalStrength': log.signalStrength,
-        'timestamp': log.timestamp.toIso8601String(),
-      });
-    } catch (_) {
-      // ignore write failures if offline
-    }
-  }
-
-  // Save last location to Hive box
-  static Future<void> _cacheLastLocation(Position pos) async {
-    final box = await Hive.openBox('lastLocation');
-    await box.put('latitude', pos.latitude);
-    await box.put('longitude', pos.longitude);
-  }
-
-  // Retrieve last known location from Hive
-  static Future<Position?> _getCachedLocation() async {
-    final box = await Hive.openBox('lastLocation');
-    final lat = box.get('latitude');
-    final lon = box.get('longitude');
-    if (lat != null && lon != null) {
-      return Position(
-        latitude: lat,
-        longitude: lon,
-        timestamp: DateTime.now(),
-        accuracy: 5.0,
-        altitude: 0.0,
-        heading: 0.0,
-        speed: 0.0,
-        speedAccuracy: 0.0,
-        headingAccuracy: 1.0,     // ✅ new required parameter
-        altitudeAccuracy: 1.0,    // ✅ new required parameter
-      );
-    }
-    return null;
   }
 }

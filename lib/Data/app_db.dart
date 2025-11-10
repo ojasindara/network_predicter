@@ -2,7 +2,7 @@ import 'package:hive/hive.dart';
 import '../models/network_log.dart';
 
 class AppDB {
-  static const String boxName = 'network_logs';
+  static const String boxName = 'networkLog';
 
   /// Open the Hive box (call this at app startup)
   Future<void> init() async {

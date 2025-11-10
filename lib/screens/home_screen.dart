@@ -7,149 +7,73 @@ import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import '../providers/logger_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:geocoding/geocoding.dart'; // NEW for reverse geocoding
 
-/// Unified model used for both JSON averages and local logs
-class PredictedLocation {
-  final String name;
-  final double latitude;
-  final double longitude;
-  final double download;
-  final double upload;
+/// Existing models and functions unchanged...
 
-  PredictedLocation({
-    required this.name,
-    required this.latitude,
-    required this.longitude,
-    required this.download,
-    required this.upload,
-  });
-}
-
-/// Loads the static averages JSON from assets/predicted_averages.json
-Future<List<PredictedLocation>> loadAverageValues() async {
-  final jsonString = await rootBundle.loadString('assets/predicted_locations.json');
-  final List<dynamic> jsonList = json.decode(jsonString) as List<dynamic>;
-
-  return jsonList.map((e) {
-    final map = e as Map<String, dynamic>;
-    return PredictedLocation(
-      name: map['name'] ?? 'Unknown',
-      latitude: (map['latitude'] ?? 0).toDouble(),
-      longitude: (map['longitude'] ?? 0).toDouble(),
-      download: (map['avg_download'] ?? 0).toDouble(),
-      upload: (map['avg_upload'] ?? 0).toDouble(),
-    );
-  }).toList();
-}
-
-/// Converts local provider logs into PredictedLocation entries safely
-List<PredictedLocation> getLocalLogsAsPredicted(LoggerProvider provider) {
-  final List<PredictedLocation> result = [];
-  final logs = provider.logs ?? <dynamic>[];
-
-  for (var i = 0; i < logs.length; i++) {
-    final log = logs[i];
-
-    double readDouble(dynamic src, List<String> keys, {double fallback = 0.0}) {
-      try {
-        if (src == null) return fallback;
-        // If it's a Map
-        if (src is Map) {
-          for (final k in keys) {
-            final v = src[k];
-            if (v is num) return v.toDouble();
-          }
-        }
-        // If it has properties (model class)
-        for (final k in keys) {
-          try {
-            final v = src?.toJson != null ? src.toJson()[k] : null;
-            if (v is num) return v.toDouble();
-          } catch (_) {}
-          try {
-            final v = src?.latitude != null && k == 'latitude' ? src.latitude : null;
-            if (v is num) return v.toDouble();
-          } catch (_) {}
-          try {
-            final v = src?.longitude != null && k == 'longitude' ? src.longitude : null;
-            if (v is num) return v.toDouble();
-          } catch (_) {}
-          try {
-            final v = src?.download != null && k == 'download' ? src.download : null;
-            if (v is num) return v.toDouble();
-          } catch (_) {}
-          try {
-            final v = src?.upload != null && k == 'upload' ? src.upload : null;
-            if (v is num) return v.toDouble();
-          } catch (_) {}
-        }
-      } catch (_) {}
-      return fallback;
-    }
-
-    final lat = readDouble(log, ['latitude', 'lat', 'latLng', 'locationLatitude'], fallback: 0.0);
-    final lng = readDouble(log, ['longitude', 'lng', 'lon', 'locationLongitude'], fallback: 0.0);
-
-    // speed fields
-    double download = readDouble(log, ['download', 'downloadSpeed', 'dlspeed', 'speed_download'], fallback: 0.0);
-    double upload = readDouble(log, ['upload', 'uploadSpeed', 'ulspeed', 'speed_upload'], fallback: 0.0);
-
-    // name
-    String name = 'Saved location ${i + 1}';
-    try {
-      if (log is Map && log['name'] is String && (log['name'] as String).isNotEmpty) {
-        name = log['name'] as String;
-      } else if (log?.name is String && (log.name as String).isNotEmpty) {
-        name = log.name as String;
-      }
-    } catch (_) {}
-
-    if (lat != 0.0 || lng != 0.0) {
-      result.add(PredictedLocation(name: name, latitude: lat, longitude: lng, download: download, upload: upload));
-    }
-  }
-
-  return result;
-}
-
-/// Combines JSON averages with local logs. Local logs are only included if
-/// their download speed is greater than the maximum download present in the JSON.
-Future<List<PredictedLocation>> getTopPredictedLocations(LoggerProvider provider, {int top = 10}) async {
-  final jsonLocations = await loadAverageValues();
-  final localLogs = getLocalLogsAsPredicted(provider);
-
-  final maxJsonDownload = jsonLocations.isNotEmpty ? jsonLocations.map((e) => e.download).reduce((a, b) => a > b ? a : b) : 0.0;
-
-  final highLocalLogs = localLogs.where((log) => log.download > maxJsonDownload).toList();
-
-  final combined = <PredictedLocation>[];
-  combined.addAll(jsonLocations);
-  combined.addAll(highLocalLogs);
-
-  combined.sort((a, b) => b.download.compareTo(a.download));
-
-  return combined.take(top).toList();
-}
-Future<void> _initPermissions() async {
-  // Request foreground location permission
-  PermissionStatus status = await Permission.location.request();
-
-  if (status.isGranted) {
-    print("Location permission granted");
-  } else if (status.isDenied) {
-    print("Location permission denied");
-    // Optionally, show a dialog explaining why it's needed
-  } else if (status.isPermanentlyDenied) {
-    print("Permission permanently denied, open app settings");
-    openAppSettings(); // Opens device settings for the user
-  }
-}
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
+class PredictedLocation {
+  final String name;
+  final double latitude;
+  final double longitude;
+  final double avgDownload;
+  final double avgUpload;
+
+  PredictedLocation({
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+    required this.avgDownload,
+    required this.avgUpload,
+  });
+
+  factory PredictedLocation.fromJson(Map<String, dynamic> json) {
+    return PredictedLocation(
+      name: json['name'] ?? 'Unknown',
+      latitude: json['latitude']?.toDouble() ?? 0.0,
+      longitude: json['longitude']?.toDouble() ?? 0.0,
+      avgDownload: json['avg_download']?.toDouble() ?? 0.0,
+      avgUpload: json['avg_upload']?.toDouble() ?? 0.0,
+    );
+  }
+}
+
+Future<List<PredictedLocation>> loadAverageValues() async {
+  try {
+    // Load the JSON file from assets
+    final jsonString = await rootBundle.loadString('assets/predicted_locations.json');
+    final List<dynamic> jsonList = json.decode(jsonString) as List<dynamic>;
+
+    // Convert JSON list into PredictedLocation objects
+    return jsonList.map((item) => PredictedLocation.fromJson(item)).toList();
+  } catch (e) {
+    debugPrint("Error loading predicted locations: $e");
+    return [];
+  }
+}
+
+
+Future<List<PredictedLocation>> getTopPredictedLocations(provider, {int top = 6}) async {
+  try {
+    // Load all predicted locations
+    final allLocations = await loadAverageValues();
+
+    // Sort them by download speed (or any metric you prefer)
+    allLocations.sort((a, b) => b.avgDownload.compareTo(a.avgDownload));
+
+    // Return only the top N results
+    return allLocations.take(top).toList();
+  } catch (e) {
+    debugPrint("Error getting top predicted locations: $e");
+    return [];
+  }
+}
+
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
@@ -158,19 +82,26 @@ class _HomeScreenState extends State<HomeScreen> {
   LatLng initialCenter = LatLng(7.3066, 5.1376);
   bool hasLocation = false;
 
+  // ✅ Variable to hold readable region/street name
+  String currentRegionName = "Fetching location name...";
+  String currentStreetName = '';
+
+
+  Marker? currentLocationMarker; // NEW
+
+
   @override
   void initState() {
     super.initState();
-    _initPermissions();
-    _determinePosition();
-    // Initialize provider logs
-    context.read<LoggerProvider>().init();
+    final provider = context.read<LoggerProvider>();
+    provider.init();
+    provider.fetchAndUpdateLocation();
   }
+
 
   Future<void> _determinePosition() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      // Prompt user to enable location
       await Geolocator.openLocationSettings();
       return;
     }
@@ -181,7 +112,6 @@ class _HomeScreenState extends State<HomeScreen> {
       if (permission == LocationPermission.denied) return;
     }
     if (permission == LocationPermission.deniedForever) {
-      // User must enable manually in settings
       await Geolocator.openAppSettings();
       return;
     }
@@ -193,14 +123,70 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
+    // 🗺️ Reverse geocode to get street name
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+          position.latitude ?? 7.3066, position.longitude?? 5.1376);
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks.first;
+        setState(() {
+          currentStreetName = place.street ?? '';
+        });
+        print("Address: ${place.street}, ${place.locality}");
+      }
+    } catch (e) {
+      print("Failed to get address: $e");
+    }
+
+
     setState(() {
       initialCenter = LatLng(position.latitude, position.longitude);
       hasLocation = true;
+
+      currentLocationMarker = Marker( // NEW
+        width: 50,
+        height: 50,
+        point: LatLng(position.latitude, position.longitude),
+        child: const Icon(
+          Icons.my_location,
+          color: Colors.blue,
+          size: 40,
+        ),
+      );
     });
 
     // Update provider
     context.read<LoggerProvider>().updateLocation(position);
   }
+
+
+  // ✅ Reverse geocoding method to get readable street/region name
+  Future<void> _getReadableLocation(double lat, double lon) async {
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(lat, lon);
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+        setState(() {
+          // Try to make the name more human-friendly
+          currentRegionName = p.street?.isNotEmpty == true
+              ? p.street!
+              : (p.subLocality?.isNotEmpty == true
+              ? p.subLocality!
+              : p.locality ?? "Unknown area");
+        });
+      } else {
+        setState(() {
+          currentRegionName = "Unknown area";
+        });
+      }
+    } catch (e) {
+      print("Error getting location name: $e");
+      setState(() {
+        currentRegionName = "Error getting location name";
+      });
+    }
+  }
+
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -244,7 +230,10 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text(
           "NETWORK LOGGING, MAPPING AND PREDICTING APP",
         ),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Theme
+            .of(context)
+            .colorScheme
+            .primary,
         actions: [
           IconButton(
             tooltip: 'Refresh predictions',
@@ -253,132 +242,143 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Map showing all logged locations
-          SizedBox(
-            height: 300,
-            width: double.infinity,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: FlutterMap(
-                options: MapOptions(
-                  initialCenter: LatLng(
-                    provider.currentPosition?.latitude ?? defaultLat,
-                    provider.currentPosition?.longitude ?? defaultLng,
-                  ),
-                  initialZoom: 15,
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                    subdomains: ['a', 'b', 'c'],
-                  ),
-                  MarkerLayer(
-                    markers: (provider.logs ?? <dynamic>[]).map((log) {
-                      double lat = 0.0;
-                      double lng = 0.0;
-                      try {
-                        if (log is Map) {
-                          lat = (log['latitude'] ?? log['lat'] ?? defaultLat).toDouble();
-                          lng = (log['longitude'] ?? log['lng'] ?? defaultLng).toDouble();
-                        } else {
-                          lat = (log.latitude ?? defaultLat).toDouble();
-                          lng = (log.longitude ?? defaultLng).toDouble();
-                        }
-                      } catch (_) {
-                        lat = defaultLat;
-                        lng = defaultLng;
-                      }
-
-                      return Marker(
-                        width: 40,
-                        height: 40,
-                        point: LatLng(lat, lng),
-                        child: const Icon(
-                          Icons.place,
-                          color: Colors.green,
-                          size: 40,
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Predicted Good Regions (hybrid: JSON + high local logs)
-          Expanded(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    "Predicted Good Regions",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: FutureBuilder<List<PredictedLocation>>(
-                      future: getTopPredictedLocations(provider, top: 10),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator());
-                        } else if (snapshot.hasError) {
-                          return Center(child: Text('Error: ${snapshot.error}'));
-                        } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                          return const Center(child: Text('No locations logged yet.'));
-                        } else {
-                          final topLocations = snapshot.data!;
-                          return ListView.separated(
-                            itemCount: topLocations.length,
-                            separatorBuilder: (context, index) => const SizedBox(height: 4),
-                            itemBuilder: (context, index) {
-                              final loc = topLocations[index];
-                              return Card(
-                                margin: EdgeInsets.zero,
-                                child: ListTile(
-                                  leading: const Icon(Icons.place, color: Colors.green),
-                                  title: Text(
-                                    loc.name,
-                                    style: const TextStyle(fontWeight: FontWeight.bold),
-                                  ),
-                                  subtitle: Text(
-                                    'Download: ${loc.download.toStringAsFixed(2)} Mbps | '
-                                        'Upload: ${loc.upload.toStringAsFixed(2)} Mbps',
-                                  ),
+                // 🗺️ Map section
+                SizedBox(
+                  height: 300,
+                  width: double.infinity,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: FlutterMap(
+                      options: MapOptions(
+                        initialCenter: LatLng(
+                          provider.currentPosition?.latitude ?? 7.3066,
+                          provider.currentPosition?.longitude ?? 5.1376,
+                        ),
+                        initialZoom: 15,
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                          subdomains: ['a', 'b', 'c'],
+                        ),
+                        MarkerLayer(
+                          markers: [
+                            if (provider.currentPosition != null)
+                              Marker(
+                                width: 50,
+                                height: 50,
+                                point: LatLng(
+                                  provider.currentPosition?.latitude ?? 7.3066,
+                                  provider.currentPosition?.longitude ?? 5.1376,
                                 ),
-                              );
-                            },
-                          );
-                        }
-                      },
+                                child: const Icon(
+                                  Icons.my_location,
+                                  color: Colors.blue,
+                                  size: 40,
+                                ),
+                              ),
+                            ...provider.logs.map(
+                                  (log) =>
+                                  Marker(
+                                    width: 40,
+                                    height: 40,
+                                    point: LatLng(log.latitude ?? 7.3066, log.longitude ?? 5.1376),
+                                    child: const Icon(
+                                      Icons.place,
+                                      color: Colors.green,
+                                      size: 40,
+                                    ),
+                                  ),
+                            ),
+                          ],
+                        ),
+                        Center(
+                          child: Text(
+                            provider.currentStreetName,
+                            style: Theme
+                                .of(context)
+                                .textTheme
+                                .titleMedium,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
 
+                const SizedBox(height: 20),
+
+                // 📍 Predicted Good Regions
+                const Text(
+                  "Predicted Good Regions",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 10),
 
-                // Current location info
+                FutureBuilder<List<PredictedLocation>>(
+                  future: getTopPredictedLocations(provider, top: 10),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    } else if (snapshot.hasError) {
+                      return Center(child: Text('Error: ${snapshot.error}'));
+                    } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const Center(
+                          child: Text('No locations logged yet.'));
+                    } else {
+                      final topLocations = snapshot.data!;
+                      return ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: topLocations.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 4),
+                        itemBuilder: (context, index) {
+                          final loc = topLocations[index];
+                          return Card(
+                            child: ListTile(
+                              leading: const Icon(
+                                  Icons.place, color: Colors.green),
+                              title: Text(
+                                loc.name,
+                                style:
+                                const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              subtitle: Text(
+                                'Download: ${loc.avgDownload.toStringAsFixed(
+                                    2)} Mbps | '
+                                    'Upload: ${loc.avgUpload.toStringAsFixed(
+                                    2)} Mbps',
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    }
+                  },
+                ),
+
+                const SizedBox(height: 16),
                 Center(
                   child: Text(
-                    hasLocation
-                        ? "Using your current location"
-                        : "Using approximate location",
-                    style: Theme.of(context).textTheme.titleMedium,
+                    provider.currentStreetName ?? "Locating...",
+                    style: Theme
+                        .of(context)
+                        .textTheme
+                        .titleMedium,
                   ),
                 ),
               ],
             ),
           ),
-        ],
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
         items: const [

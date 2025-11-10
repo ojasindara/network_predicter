@@ -19,7 +19,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   void initState() {
     super.initState();
     // Open the Hive box
-    logBox = Hive.box<NetworkLog>('networkLogs');
+    logBox = Hive.box<NetworkLog>('networkLog');
   }
 
   @override
@@ -27,7 +27,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Network Log History"),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Theme
+            .of(context)
+            .colorScheme
+            .primary,
       ),
       body: ValueListenableBuilder(
         valueListenable: logBox.listenable(),
@@ -39,17 +42,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
           }
 
           // Show logs in reverse (latest first)
-          final logs = box.values.toList().reversed.toList();
+          final logs = box.values
+              .toList()
+              .reversed
+              .toList();
 
           return ListView.builder(
             itemCount: logs.length,
             itemBuilder: (context, index) {
               final log = logs[index];
 
-              // Format the timestamp nicely
-              String formattedTime = "";
+              // Format the timestamp safely
+              String formattedTime;
               try {
-                DateTime dt = DateTime.parse(log.timestamp.toString());
+                DateTime dt = DateTime.fromMillisecondsSinceEpoch(
+                    log.timestamp);
                 formattedTime = DateFormat("dd MMM yyyy, hh:mm a").format(dt);
               } catch (_) {
                 formattedTime = log.timestamp.toString();
@@ -58,15 +65,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
               return ListTile(
                 leading: const Icon(Icons.wifi),
                 title: Text(
-                  log.region.isNotEmpty
-                      ? log.region
-                      : "Lat: ${log.latitude.toStringAsFixed(4)}, "
-                      "Lng: ${log.longitude.toStringAsFixed(4)}",
+                  "Lat: ${(log.latitude ?? 0.0).toStringAsFixed(4)}, "
+                      "Lng: ${(log.longitude ?? 0.0).toStringAsFixed(4)}",
                 ),
                 subtitle: Text(
-                  "Signal: ${log.signalStrength} | "
-                      "DL: ${log.downloadSpeed.toStringAsFixed(2)} Kbps | "
-                      "UL: ${log.uploadSpeed.toStringAsFixed(2)} Kbps | "
+                  "Signal: ${log.signalStrength ?? 0} | "
+                      "DL: ${(log.downloadKb ?? 0.0).toStringAsFixed(
+                      2)} Kbps | "
+                      "UL: ${(log.uploadKb ?? 0.0).toStringAsFixed(2)} Kbps | "
+                      "Weather: ${log.weather ?? 'Unknown'} | "
+                      "Temp: ${log.temperature?.toStringAsFixed(1) ??
+                      'N/A'}°C | "
                       "Time: $formattedTime",
                 ),
               );

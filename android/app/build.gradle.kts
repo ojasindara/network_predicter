@@ -8,13 +8,13 @@ plugins {
 
 android {
     namespace = "com.example.network_predicter"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.example.network_predicter"
-        minSdk = 23 // Supports runtime permissions
-        targetSdk = 35
+        minSdk = flutter.minSdkVersion // Supports runtime permissions
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
     }
@@ -54,6 +54,13 @@ dependencies {
 
     // Optional: Kotlin coroutines if you want async work
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
+    implementation("org.json:json:20230227")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+
 }
 
 flutter {
