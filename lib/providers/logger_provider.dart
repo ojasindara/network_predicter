@@ -23,6 +23,9 @@ class LoggerProvider extends ChangeNotifier {
   Position? get currentPosition => _currentPosition;
   String _currentStreetName = "Home";
   List<NetworkLog> get logs => _logs;
+  int? _lastSignalStrength; // private variable
+  int? get lastSignalStrength => _lastSignalStrength; // public getter
+
 
   bool _isLogging = false;
   bool get isLogging => _isLogging;
@@ -82,12 +85,13 @@ class LoggerProvider extends ChangeNotifier {
     await LoggerService.initialize();
     await LoggerService.startLogging((log) {
       _logs.add(log);
+      _lastSignalStrength = log.signalStrength;
       notifyListeners();
     });
 
     LoggerService.logStream.listen((log) async {
       await logNetwork(
-        signalStrength: log.signalStrength ?? 0,
+        signalStrength: log.signalStrength ?? -90,
         downloadSpeed: log.downloadKb,
         uploadSpeed: log.uploadKb,
         weather: log.weather ?? '',

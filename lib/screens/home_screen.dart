@@ -7,6 +7,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import '../providers/logger_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:http/http.dart' as http; // for API calls
+import 'package:url_launcher/url_launcher.dart'; // for opening your API link
 import 'package:geocoding/geocoding.dart'; // NEW for reverse geocoding
 
 /// Existing models and functions unchanged...
@@ -97,6 +99,40 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.init();
     provider.fetchAndUpdateLocation();
   }
+
+  Future<Map<String, dynamic>> _getPredictionForCurrentLocation(LoggerProvider provider) async {
+    try {
+      final position = provider.currentPosition;
+      if (position == null) {
+        throw Exception('Location not available. Please enable location services.');
+      }
+
+      // Try to get last logged signal strength
+      final lastSignalStrength = provider.logs.isNotEmpty
+          ? provider.logs.last.signalStrength ?? -85
+          : -85;
+
+      final response = await http.post(
+        Uri.parse('https://xgb-network-predictor.onrender.com/predict'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'signal_dbm': lastSignalStrength,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'timestamp': DateTime.now().toIso8601String(),
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      } else {
+        throw Exception('Prediction failed: ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Error fetching prediction: $e');
+    }
+  }
+
 
 
   Future<void> _determinePosition() async {
@@ -315,6 +351,64 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
 
                 const SizedBox(height: 20),
+
+                // 🌐 Current Location Prediction (auto-refreshes every 30s)
+                StreamBuilder<int>(
+                  stream: Stream.periodic(const Duration(seconds: 30), (x) => x),
+                  builder: (context, _) {
+                    final provider = Provider.of<LoggerProvider>(context, listen: true);
+                    return FutureBuilder<Map<String, dynamic>>(
+                      future: _getPredictionForCurrentLocation(provider),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(child: CircularProgressIndicator());
+                        } else if (snapshot.hasError) {
+                          return Card(
+                            color: Colors.red[50],
+                            child: ListTile(
+                              leading: const Icon(Icons.error, color: Colors.red),
+                              title: const Text("Prediction Error"),
+                              subtitle: Text(snapshot.error.toString()),
+                            ),
+                          );
+                        } else if (!snapshot.hasData) {
+                          return const SizedBox();
+                        }
+
+                        final prediction = snapshot.data!;
+                        final region = prediction['region'] ?? 'Current Area';
+                        final predictedSpeed = prediction['predicted_speed'] ?? 'N/A';
+                        final signal = prediction['signal_dbm'] ?? provider.lastSignalStrength ?? 'N/A';
+
+                        return Card(
+                          color: Colors.blue[50],
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          child: ListTile(
+                            leading: const Icon(Icons.location_on, color: Colors.blue),
+                            title: Text(
+                              "Predicted Network Quality for $region",
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Text(
+                              "Signal: $signal dBm\nPredicted Speed: $predictedSpeed Mbps\nPredicted Quality: Good",
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.refresh, color: Colors.blue),
+                              tooltip: "Refresh Prediction",
+                              onPressed: () {
+                                // Manually trigger a rebuild
+                                (context as Element).markNeedsBuild();
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+
 
                 // 📍 Predicted Good Regions
                 const Text(
