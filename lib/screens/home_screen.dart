@@ -1,7 +1,11 @@
 import 'dart:convert';
+import 'dart:math';
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_map/flutter_map.dart';
+import 'dart:typed_data';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
@@ -100,39 +104,69 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.fetchAndUpdateLocation();
   }
 
-  Future<Map<String, dynamic>> _getPredictionForCurrentLocation(LoggerProvider provider) async {
+  Future<Map<String, dynamic>> _runLocalPrediction(LoggerProvider provider) async {
     try {
       final position = provider.currentPosition;
       if (position == null) {
-        throw Exception('Location not available. Please enable location services.');
+        throw Exception("Location not available.");
       }
 
-      // Try to get last logged signal strength
-      final lastSignalStrength = provider.logs.isNotEmpty
+      final lastSignal = provider.logs.isNotEmpty
           ? provider.logs.last.signalStrength ?? -85
           : -85;
 
-      final response = await http.post(
-        Uri.parse('https://xgb-network-predictor.onrender.com/predict'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'signal_dbm': lastSignalStrength,
-          'latitude': position.latitude,
-          'longitude': position.longitude,
-          'timestamp': DateTime.now().toIso8601String(),
-        }),
-      );
+      final now = DateTime.now();
+      final hour = now.hour;
+      final weekday = now.weekday - 1;
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
-      } else {
-        throw Exception('Prediction failed: ${response.body}');
+      final hourSin = sin(2 * pi * hour / 24);
+      final hourCos = cos(2 * pi * hour / 24);
+
+      // INPUT must be List<double>
+      final input = [
+        lastSignal.toDouble(),
+        position.latitude,
+        position.longitude,
+        hourSin,
+        hourCos,
+        weekday.toDouble(),
+      ];
+
+      final interpreter =
+      await Interpreter.fromAsset('models/network_predictor.tflite');
+
+      try {
+        // output buffer (1 batch, 1 prediction)
+        List<List<double>> output = List.generate(
+          1,
+              (_) => List.filled(1, 0.0),
+        );
+
+        // Run inference
+        interpreter.run(input, output);
+
+        // Clean up
+        interpreter.close();
+
+        final prediction = max(0.0, output[0][0]);
+
+        // 🔥 IMPORTANT: Return a MAP because your function requires it
+        return {
+          "prediction": prediction,
+          "signal": lastSignal,
+          "lat": position.latitude,
+          "lng": position.longitude,
+          "hour": hour,
+          "weekday": weekday,
+        };
+
+      } catch (e) {
+        throw Exception("Local prediction error: $e");
       }
     } catch (e) {
-      throw Exception('Error fetching prediction: $e');
+      throw Exception("Prediction run failed: $e");
     }
   }
-
 
 
   Future<void> _determinePosition() async {
@@ -358,7 +392,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   builder: (context, _) {
                     final provider = Provider.of<LoggerProvider>(context, listen: true);
                     return FutureBuilder<Map<String, dynamic>>(
-                      future: _getPredictionForCurrentLocation(provider),
+                      future: _runLocalPrediction(provider),
                       builder: (context, snapshot) {
                         if (snapshot.connectionState == ConnectionState.waiting) {
                           return const Center(child: CircularProgressIndicator());
